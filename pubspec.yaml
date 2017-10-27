@@ -1,5 +1,5 @@
 name: human_cues_tag_game
-description: A new Flutter project.
+description: An app for running the Find Symbols game for the Human Cues project
 
 dependencies:
   flutter:
