@@ -13,6 +13,9 @@ doc/api/
 .idea/
 *.iml
 
+# Constructed files
+android/app/.externalNativeBuild/
+
 # Temporary files
 *.swp*
 ~*
