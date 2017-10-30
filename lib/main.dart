@@ -33,12 +33,19 @@ class HelloPage extends StatefulWidget {
 class _HelloPageState extends State<HelloPage> {
   static const MethodChannel methodChannel =
       const MethodChannel('human.cues/hello');
+  static const EventChannel eventChannel =
+      const EventChannel('human.cues/time');
 
   static const String javaMethod = 'helloJava';
   static const String cppMethod = 'helloCpp';
 
   String _javaResponse = "NOPE";
   String _cppResponse = "NOPE";
+
+  String _javaTime = '...';
+  String _cppTime = '...';
+
+  StreamSubscription<String> subscription;
 
   bool callCpp = false;
 
@@ -60,6 +67,32 @@ class _HelloPageState extends State<HelloPage> {
     });
 
     callCpp = !callCpp;
+  }
+
+  void _onTime(String event) {
+    setState(() {
+      _javaTime = event;
+    });
+  }
+
+  void _onError(PlatformException error) {
+    setState(() {
+      _javaTime = "ERROR";
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    subscription = eventChannel
+        .receiveBroadcastStream()
+        .listen(_onTime, onError: _onError);
+  }
+
+  @override
+  void dispose() {
+    subscription.cancel();
+    super.dispose();
   }
 
   @override
@@ -84,6 +117,13 @@ class _HelloPageState extends State<HelloPage> {
             ),
             new Text(
               _cppResponse,
+              style: Theme.of(context).textTheme.display1,
+            ),
+            new Text(
+              'Java\'s time says:',
+            ),
+            new Text(
+              _javaTime,
               style: Theme.of(context).textTheme.display1,
             ),
           ],
