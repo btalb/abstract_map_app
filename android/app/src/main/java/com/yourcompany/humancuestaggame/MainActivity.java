@@ -22,11 +22,11 @@ public class MainActivity extends FlutterActivity {
 
   private int javaTime = 0;
 
-  static {
-    System.loadLibrary("native-lib");
-  }
+  // static {
+  //   System.loadLibrary("native-lib");
+  // }
 
-  public native String helloJNI();
+  // public native String helloJNI();
 
   @Override
   protected void onCreate(Bundle savedInstanceState) {
@@ -69,7 +69,8 @@ public class MainActivity extends FlutterActivity {
               result.success("Java says hello!");
             } else if (call.method.equals("helloCpp")) {
               try {
-                result.success(helloJNI());
+                result.success("JNI OFF");
+                //result.success(helloJNI());
               } catch (Exception e) {
                 result.success("Java couldn't find c++");
               }
