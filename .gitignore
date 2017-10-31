@@ -1,20 +1,17 @@
-# Files and directories created by pub
-.packages
-.pub/
-build/
-
-# Remove the following pattern if you wish to check in your lock file
-pubspec.lock
-
-# Directory created by dartdoc
-doc/api/
+# Defaults provided by Android Studio
+*.iml
+.gradle
+/local.properties
+/.idea/workspace.xml
+/.idea/libraries
+.DS_Store
+/build
+/captures
+.externalNativeBuild
 
 # Remove all of the IntelliJ IDEA extras (aim to be IDE independent)
 .idea/
 *.iml
-
-# Constructed files
-android/app/.externalNativeBuild/
 
 # Temporary files
 *.swp*
