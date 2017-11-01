@@ -3,6 +3,7 @@ package com.humancues.humancuestaggame;
 import android.Manifest;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.graphics.ImageFormat;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
@@ -10,13 +11,16 @@ import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CameraMetadata;
 import android.hardware.camera2.CaptureRequest;
+import android.hardware.camera2.params.StreamConfigurationMap;
+import android.media.Image;
+import android.media.ImageReader;
 import android.support.annotation.NonNull;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.util.Log;
-import android.view.DragEvent;
+import android.util.Size;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
@@ -30,14 +34,20 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.ViewSwitcher;
 
-import java.util.Collections;
+import java.util.Arrays;
 import java.util.List;
 
-public class IntroActivity extends AppCompatActivity {
+public class GameActivity extends AppCompatActivity {
     private static final int CAMERA_PERMISSIONS = 0;
 
+    private final Size cameraSize = new Size(1280, 720);
+    private String cameraID = null;
+    private CameraCharacteristics cameraCharacteristics = null;
     private CameraDevice currentCameraDevice = null;
     private CaptureRequest currentCaptureRequest = null;
+
+    private final int imageFormat = ImageFormat.JPEG;
+    private ImageReader imageReader = null;
 
     public String[] listExperiments = {"Experiment 1", "Experiment 2", "TODO"};
     public String[] listGoals = {"Alice's office",
@@ -59,7 +69,7 @@ public class IntroActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_intro);
+        setContentView(R.layout.activity_game);
 
         // Reconstruct the adapters
         refreshExperimentSpinner();
@@ -188,6 +198,18 @@ public class IntroActivity extends AppCompatActivity {
         cv.getHolder().addCallback(new SurfaceHolder.Callback() {
             @Override
             public void surfaceCreated(SurfaceHolder surfaceHolder) {
+                // Set size and format to match what we will be getting out
+                // of the camera
+                surfaceHolder.setFixedSize(cameraSize.getWidth(), cameraSize
+                        .getHeight());
+
+                // Create the image reader
+                imageReader = ImageReader.newInstance(cameraSize.getWidth(),
+                        cameraSize.getHeight(), imageFormat, 1);
+                imageReader.setOnImageAvailableListener(new
+                        ImageReaderCallback(), null);
+
+                // Initialise the camera
                 initialiseCamera();
             }
 
@@ -222,26 +244,34 @@ public class IntroActivity extends AppCompatActivity {
         // Attempt to get the ID of the back facing camera
         CameraManager cm = (CameraManager) this.getSystemService(Context
                 .CAMERA_SERVICE);
-        String id = null;
         try {
             String[] cameras = cm.getCameraIdList();
             for (final String s : cameras) {
                 CameraCharacteristics cc = cm.getCameraCharacteristics(s);
                 if (cc.get(CameraCharacteristics.LENS_FACING) ==
                         CameraMetadata.LENS_FACING_BACK) {
-                    id = s;
+                    cameraID = s;
+                    cameraCharacteristics = cc;
                 }
             }
-            if (id == null) throw new Exception();
+            if (cameraID == null) throw new Exception();
         } catch (Exception e) {
             Toast.makeText(this, "Back facing camera access failed!", Toast
                     .LENGTH_LONG).show();
             return;
         }
 
+        StreamConfigurationMap scm = cameraCharacteristics.get
+                (CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+        for (final int i : scm.getOutputFormats()) {
+            Log.e("HuC", "Output Format: " + i);
+            Log.e("HuC", "Output Sizes: " + Arrays.toString(scm
+                    .getOutputSizes(i)));
+        }
+
         // We have the ID of the back facing camera, now
         try {
-            cm.openCamera(id, new CameraDeviceCallback(), null);
+            cm.openCamera(cameraID, new CameraDeviceCallback(), null);
         } catch (CameraAccessException e) {
             Toast.makeText(this, "The app failed to access the camera",
                     Toast.LENGTH_LONG).show();
@@ -252,19 +282,19 @@ public class IntroActivity extends AppCompatActivity {
     class CameraDeviceCallback extends CameraDevice.StateCallback {
         @Override
         public void onOpened(@NonNull CameraDevice cameraDevice) {
-            // Get the Surface to hold the camera data
-            Surface s = ((SurfaceView) findViewById(R.id.camera_view))
-                    .getHolder().getSurface();
-
-            List<Surface> ls = Collections.singletonList(s);
-
             try {
-                // Update the cached values
+                currentCameraDevice = cameraDevice;
+
+                // Get a list of the Surfaces we want to push the camera data to
+                List<Surface> ls = Arrays.asList(((SurfaceView) findViewById
+                        (R.id.camera_view)).getHolder().getSurface(),
+                        imageReader.getSurface());
+
+                // Build a capture request, with the target surfaces included
                 CaptureRequest.Builder b = cameraDevice.createCaptureRequest
                         (CameraDevice.TEMPLATE_PREVIEW);
-                b.addTarget(s);
+                for (final Surface s : ls) b.addTarget(s);
                 currentCaptureRequest = b.build();
-                currentCameraDevice = cameraDevice;
 
                 // Generate the capture session
                 cameraDevice.createCaptureSession(ls, new
@@ -303,6 +333,14 @@ public class IntroActivity extends AppCompatActivity {
         }
     }
 
+    class ImageReaderCallback implements ImageReader.OnImageAvailableListener {
+        @Override
+        public void onImageAvailable(ImageReader imageReader) {
+            Image i = imageReader.acquireLatestImage();
+            i.close();
+            Log.e("HuC", stringFromJNI());
+        }
+    }
     /**
      * Control the spinner content
      */
