@@ -3,6 +3,8 @@ package com.humancues.humancuestaggame;
 import android.Manifest;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.ImageFormat;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
@@ -34,6 +36,8 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.ViewSwitcher;
 
+import java.nio.Buffer;
+import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.List;
 
@@ -205,7 +209,7 @@ public class GameActivity extends AppCompatActivity {
 
                 // Create the image reader
                 imageReader = ImageReader.newInstance(cameraSize.getWidth(),
-                        cameraSize.getHeight(), imageFormat, 1);
+                        cameraSize.getHeight(), imageFormat, 2);
                 imageReader.setOnImageAvailableListener(new
                         ImageReaderCallback(), null);
 
@@ -336,11 +340,35 @@ public class GameActivity extends AppCompatActivity {
     class ImageReaderCallback implements ImageReader.OnImageAvailableListener {
         @Override
         public void onImageAvailable(ImageReader imageReader) {
+            // Attempt to get an image, exiting if that failed
             Image i = imageReader.acquireLatestImage();
+            if (i == null) return;
+
+            // Copy all of the bytes into an array (gross...)
+            Image.Plane p = i.getPlanes()[0];
+            byte[] bytes = new byte[p.getBuffer().remaining()];
+            p.getBuffer().get(bytes);
+
+            // Convert the JPEG into ARGB
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inPremultiplied = false;
+            Bitmap b = BitmapFactory.decodeByteArray(bytes,
+                    0, p.getBuffer().position());
+
+            // Move the bytes from the ARGB bitmap into a byte[]
+            ByteBuffer bb = ByteBuffer.allocate(b.getByteCount());
+            b.copyPixelsToBuffer(bb);
+            bytes = bb.array();
+
+            // Step into native code, checking the ARGB byte[] for April Tags
+            int[] tags = searchForAprilTags(bytes);
+            Log.e("HuC", "Returned " + Arrays.toString(tags));
+
+            // Clean up things when we are done
             i.close();
-            Log.e("HuC", stringFromJNI());
         }
     }
+
     /**
      * Control the spinner content
      */
@@ -370,4 +398,6 @@ public class GameActivity extends AppCompatActivity {
      * which is packaged with this application.
      */
     public native String stringFromJNI();
+
+    public native int[] searchForAprilTags(byte[] argbBytes);
 }
