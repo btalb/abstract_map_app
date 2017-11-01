@@ -36,14 +36,12 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.ViewSwitcher;
 
-import java.nio.Buffer;
-import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.List;
 
 public class GameActivity extends AppCompatActivity {
+    // Camera information
     private static final int CAMERA_PERMISSIONS = 0;
-
     private final Size cameraSize = new Size(1280, 720);
     private String cameraID = null;
     private CameraCharacteristics cameraCharacteristics = null;
@@ -53,23 +51,26 @@ public class GameActivity extends AppCompatActivity {
     private final int imageFormat = ImageFormat.JPEG;
     private ImageReader imageReader = null;
 
-    public String[] listExperiments = {"Experiment 1", "Experiment 2", "TODO"};
-    public String[] listGoals = {"Alice's office",
-            "Bob's office"};
-
-    private String currentGoal = "Alice's office";
-
+    // Tag detection information for the app
     enum TAG_TYPE { NONE, GOAL, INFO, WRONG };
     private TAG_TYPE currentTagType = TAG_TYPE.NONE;
     private String currentTagText = null;
 
     private int HACK = 0;
 
-    // Used to load the 'native-lib' library on application startup.
+    // Experimental trial configurations
+    public String[] listExperiments = {"Experiment 1", "Experiment 2", "TODO"};
+    public String[] listGoals = {"Alice's office",
+            "Bob's office"};
+    private String currentGoal = "Alice's office";
+
     static {
         System.loadLibrary("native-lib");
     }
 
+    /**
+     * Lifecycle implementations
+     */
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -83,6 +84,15 @@ public class GameActivity extends AppCompatActivity {
 
         // Configure the interface's interactivity
         configureInteractivity();
+
+        // Get the AprilTag detector up and ready to go
+        initAprilTags();
+    }
+
+    @Override
+    protected void onDestroy() {
+        cleanupAprilTags();
+        super.onDestroy();
     }
 
     @Override
@@ -344,25 +354,16 @@ public class GameActivity extends AppCompatActivity {
             Image i = imageReader.acquireLatestImage();
             if (i == null) return;
 
-            // Copy all of the bytes into an array (gross...)
+            // Step into native code, passing the JPEG byte buffer down to be decoded and checked
+            // for April Tags
             Image.Plane p = i.getPlanes()[0];
             byte[] bytes = new byte[p.getBuffer().remaining()];
             p.getBuffer().get(bytes);
-
-            // Convert the JPEG into ARGB
-            BitmapFactory.Options opts = new BitmapFactory.Options();
-            opts.inPremultiplied = false;
-            Bitmap b = BitmapFactory.decodeByteArray(bytes,
-                    0, p.getBuffer().position());
-
-            // Move the bytes from the ARGB bitmap into a byte[]
-            ByteBuffer bb = ByteBuffer.allocate(b.getByteCount());
-            b.copyPixelsToBuffer(bb);
-            bytes = bb.array();
-
-            // Step into native code, checking the ARGB byte[] for April Tags
-            int[] tags = searchForAprilTags(bytes);
-            Log.e("HuC", "Returned " + Arrays.toString(tags));
+            Detection d = searchForAprilTags(bytes, bytes.length);
+            if (d != null) {
+                Log.e("HuC", "Tag " + d.id + " detected @ " + Arrays
+                        .toString(d.coords()));
+            }
 
             // Clean up things when we are done
             i.close();
@@ -394,10 +395,26 @@ public class GameActivity extends AppCompatActivity {
     }
 
     /**
+     * Detection representation
+     */
+    public class Detection {
+        public int id;
+        public double x1, y1, x2, y2, x3, y3, x4, y4;
+
+        public double[] coords() {
+            return new double[] {x1, y1, x2, y2, x3, y3, x4, y4};
+        }
+    }
+
+    /**
      * A native method that is implemented by the 'native-lib' native library,
      * which is packaged with this application.
      */
     public native String stringFromJNI();
 
-    public native int[] searchForAprilTags(byte[] argbBytes);
+    public native void initAprilTags();
+
+    public native void cleanupAprilTags();
+
+    public native Detection searchForAprilTags(byte[] bytes, int nbytes);
 }
