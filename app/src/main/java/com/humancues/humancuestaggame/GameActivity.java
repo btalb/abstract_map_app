@@ -3,7 +3,17 @@ package com.humancues.humancuestaggame;
 import android.Manifest;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.ImageFormat;
+import android.graphics.Matrix;
+import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffXfermode;
+import android.graphics.RectF;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
@@ -79,6 +89,22 @@ public class GameActivity extends AppCompatActivity {
             this.type = type;
             this.text = text;
         }
+
+        public int correspondingColour() {
+            int colourId = R.color.colorPrimary;
+            switch (currentMapping.type) {
+                case EMPTY:
+                    return R.color.feedbackNone;
+                case INFO:
+                    return R.color.feedbackOrange;
+                case WRONG:
+                    return R.color.feedbackRed;
+                case GOAL:
+                    return R.color.feedbackGreen;
+                default:
+                    return R.color.colorPrimary;
+            }
+        }
     }
     private final SymbolMapping[] MAPPINGS = {
             new SymbolMapping(0, SYMBOL_TYPE.WRONG, "Bob's office"),
@@ -88,6 +114,9 @@ public class GameActivity extends AppCompatActivity {
             new SymbolMapping(3, SYMBOL_TYPE.GOAL, "Alice's office"),
     };
     private SymbolMapping currentMapping = null;
+
+    // Drawing variables
+    private Paint highlightPaint = null;
 
     static {
         System.loadLibrary("native-lib");
@@ -102,6 +131,7 @@ public class GameActivity extends AppCompatActivity {
         setContentView(R.layout.activity_game);
 
         // Configure the interface (interactivity and content)
+        initialiseDrawing();
         refreshExperimentSpinner();
         configureInteractivity();
 
@@ -166,6 +196,7 @@ public class GameActivity extends AppCompatActivity {
                 currentMapping = null;
 
                 if (done) {
+                    findViewById(R.id.detection_view).setVisibility(View.GONE);
                     findViewById(R.id.background_mask).setVisibility(View.VISIBLE);
                     ((ViewSwitcher) findViewById(R.id.switcher)).showPrevious();
                 } else {
@@ -184,30 +215,13 @@ public class GameActivity extends AppCompatActivity {
         if (currentDetection == null) {
             findViewById(R.id.task_panel).setBackgroundResource(R.color.colorPrimary);
             findViewById(R.id.tag_panel).setVisibility(View.GONE);
+            findViewById(R.id.detection_view).setVisibility(View.GONE);
             detecting = true;
             return;
         }
 
-        // Extract symbols from the conversion database
-        for (final SymbolMapping s : MAPPINGS)
-            if(currentDetection.id == s.id) currentMapping = s;
-
         // Apply correct colours
-        int colourId = R.color.colorPrimary;
-        switch (currentMapping.type) {
-            case EMPTY:
-                colourId = R.color.feedbackNone;
-                break;
-            case INFO:
-                colourId = R.color.feedbackOrange;
-                break;
-            case WRONG:
-                colourId = R.color.feedbackRed;
-                break;
-            case GOAL:
-                colourId = R.color.feedbackGreen;
-                break;
-        }
+        final int colourId = currentMapping.correspondingColour();
         findViewById(R.id.task_panel).setBackgroundResource(colourId);
         findViewById(R.id.tag_panel).setBackgroundResource(colourId);
 
@@ -219,6 +233,9 @@ public class GameActivity extends AppCompatActivity {
         ((Button) findViewById(R.id.tag_info_button)).setText(
                 (currentMapping.type == SYMBOL_TYPE.EMPTY) ?
                         "<empty tag>" : currentMapping.text);
+
+        // Show the detection view
+        findViewById(R.id.detection_view).setVisibility(View.VISIBLE);
 
         // We have some tag info being displayed, turn detecting off
         detecting = false;
@@ -405,9 +422,37 @@ public class GameActivity extends AppCompatActivity {
             p.getBuffer().get(bytes);
             currentDetection = searchForAprilTags(bytes, bytes.length);
             if (currentDetection != null) {
+                // Extract symbols from the conversion database
+                for (final SymbolMapping s : MAPPINGS)
+                    if(currentDetection.id == s.id) currentMapping = s;
+
+                // Get a mutable copy of the bitmap
+                Bitmap bm = BitmapFactory.decodeByteArray(bytes, 0,
+                        bytes.length).copy(Bitmap.Config.ARGB_8888, true);
+
+                // Configure the highlight paint to the type of detection
+                highlightPaint.setColor(GameActivity.this.getResources()
+                        .getColor(currentMapping.correspondingColour()));
+
+                // Draw to the canvas
+                final Path box = currentDetection.path();
+                final Canvas c = new Canvas(bm);
+                highlightPaint.setStyle(Paint.Style.STROKE);
+                c.drawPath(box, highlightPaint);
+                highlightPaint.setStyle(Paint.Style.FILL);
+                highlightPaint.setAlpha(128);
+                c.drawPath(box, highlightPaint);
+
+                // Finish by rotating the bitmap 90 degress
+                Matrix m = new Matrix();
+                m.postRotate(90);
+                final Bitmap bmRotated = Bitmap.createBitmap(bm, 0, 0,
+                        bm.getWidth(), bm.getHeight(), m, true);
                 GameActivity.this.runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
+                        ((ImageView) findViewById(R.id.detection_view))
+                                .setImageBitmap(bmRotated);
                         updateTagDisplay();
                     }
                 });
@@ -416,6 +461,15 @@ public class GameActivity extends AppCompatActivity {
             // Clean up things when we are done
             i.close();
         }
+    }
+
+    /**
+     * Drawing helpers
+     */
+    private void initialiseDrawing() {
+        highlightPaint = new Paint();
+        highlightPaint.setAntiAlias(true);
+        highlightPaint.setStrokeWidth(5);
     }
 
     /**
@@ -451,6 +505,16 @@ public class GameActivity extends AppCompatActivity {
 
         public double[] coords() {
             return new double[] {x1, y1, x2, y2, x3, y3, x4, y4};
+        }
+
+        public Path path() {
+            Path p = new Path();
+            p.moveTo((float) x1, (float) y1);
+            p.lineTo((float) x2, (float) y2);
+            p.lineTo((float) x3, (float) y3);
+            p.lineTo((float) x4, (float) y4);
+            p.close();
+            return p;
         }
     }
 

@@ -10,6 +10,19 @@
 
 // Dirty globals
 apriltag_detector *detector;
+
+jclass detectionClass;
+jmethodID constructor;
+jfieldID fieldId;
+jfieldID fieldX1;
+jfieldID fieldY1;
+jfieldID fieldX2;
+jfieldID fieldY2;
+jfieldID fieldX3;
+jfieldID fieldY3;
+jfieldID fieldX4;
+jfieldID fieldY4;
+
 const bool DEBUG = 0;
 
 extern "C" double ms(struct timespec *ts) {
@@ -45,6 +58,22 @@ Java_com_humancues_humancuestaggame_GameActivity_initAprilTags(
     // Configure the detector
     apriltag_detector_add_family(detector, tag36h11_create());
     detector->quad_decimate = 8.0;
+
+    // Cache all of the Java references
+    detectionClass = env->FindClass
+            ("com/humancues/humancuestaggame/GameActivity$Detection");
+    detectionClass = (jclass) env->NewGlobalRef(detectionClass);
+    constructor = env->GetMethodID(detectionClass, "<init>", ""
+            "(Lcom/humancues/humancuestaggame/GameActivity;)V");
+    fieldId = env->GetFieldID(detectionClass, "id", "I");
+    fieldX1 = env->GetFieldID(detectionClass, "x1", "D");
+    fieldY1 = env->GetFieldID(detectionClass, "y1", "D");
+    fieldX2 = env->GetFieldID(detectionClass, "x2", "D");
+    fieldY2 = env->GetFieldID(detectionClass, "y2", "D");
+    fieldX3 = env->GetFieldID(detectionClass, "x3", "D");
+    fieldY3 = env->GetFieldID(detectionClass, "y3", "D");
+    fieldX4 = env->GetFieldID(detectionClass, "x4", "D");
+    fieldY4 = env->GetFieldID(detectionClass, "y4", "D");
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -102,19 +131,6 @@ Java_com_humancues_humancuestaggame_GameActivity_searchForAprilTags(
     }
 
     // Construct the return object
-    jclass detectionClass = env->FindClass
-            ("com/humancues/humancuestaggame/GameActivity$Detection");
-    jmethodID constructor = env->GetMethodID(detectionClass, "<init>", ""
-            "(Lcom/humancues/humancuestaggame/GameActivity;)V");
-    jfieldID fieldId = env->GetFieldID(detectionClass, "id", "I");
-    jfieldID fieldX1 = env->GetFieldID(detectionClass, "x1", "D");
-    jfieldID fieldY1 = env->GetFieldID(detectionClass, "y1", "D");
-    jfieldID fieldX2 = env->GetFieldID(detectionClass, "x2", "D");
-    jfieldID fieldY2 = env->GetFieldID(detectionClass, "y2", "D");
-    jfieldID fieldX3 = env->GetFieldID(detectionClass, "x3", "D");
-    jfieldID fieldY3 = env->GetFieldID(detectionClass, "y3", "D");
-    jfieldID fieldX4 = env->GetFieldID(detectionClass, "x4", "D");
-    jfieldID fieldY4 = env->GetFieldID(detectionClass, "y4", "D");
     jobject obj = env->NewObject(detectionClass, constructor, NULL);
     env->SetIntField(obj, fieldId, detection->id);
     env->SetDoubleField(obj, fieldX1, detection->p[0][0]);
@@ -128,6 +144,8 @@ Java_com_humancues_humancuestaggame_GameActivity_searchForAprilTags(
     if (DEBUG) clock_gettime(CLOCK_MONOTONIC, &tO);
 
     // Clean up and return
+    pjpeg_destroy(jpg);
+    image_u8_destroy(img);
     apriltag_detections_destroy(detections);
     if (DEBUG) {
         tdiff(&tS, &tO, &rA);
