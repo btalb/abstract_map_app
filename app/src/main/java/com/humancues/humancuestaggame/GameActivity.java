@@ -57,10 +57,8 @@ public class GameActivity extends AppCompatActivity {
     private Handler cameraHandler = null;
 
     // Tag detection information for the app
-    public boolean detecting = false;
-    enum TAG_TYPE { NONE, EMPTY, INFO, WRONG, GOAL };
-    private TAG_TYPE currentTagType = TAG_TYPE.NONE;
-    private String currentTagText = null;
+    private boolean detecting = false;
+    private Detection currentDetection = null;
 
     // Experimental trial configurations
     public String[] listExperiments = {"Experiment 1", "Experiment 2", "TODO"};
@@ -68,11 +66,32 @@ public class GameActivity extends AppCompatActivity {
             "Bob's office"};
     private String currentGoal = "Alice's office";
 
+    // Symbol mapping
+    // TODO do properly...
+    enum SYMBOL_TYPE { EMPTY, INFO, WRONG, GOAL };
+    private class SymbolMapping {
+        public int id;
+        public SYMBOL_TYPE type;
+        public String text;
+
+        SymbolMapping(int id, SYMBOL_TYPE type, String text) {
+            this.id = id;
+            this.type = type;
+            this.text = text;
+        }
+    }
+    private final SymbolMapping[] MAPPINGS = {
+            new SymbolMapping(0, SYMBOL_TYPE.WRONG, "Bob's office"),
+            new SymbolMapping(1, SYMBOL_TYPE.INFO, "Alice's office is down " +
+                    "the corridor, past Bob's office"),
+            new SymbolMapping(2, SYMBOL_TYPE.EMPTY, null),
+            new SymbolMapping(3, SYMBOL_TYPE.GOAL, "Alice's office"),
+    };
+    private SymbolMapping currentMapping = null;
+
     static {
         System.loadLibrary("native-lib");
     }
-
-    public int HACK = 0;
 
     /**
      * Lifecycle implementations
@@ -141,9 +160,10 @@ public class GameActivity extends AppCompatActivity {
         ib.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                boolean done = currentTagType == TAG_TYPE.GOAL;
-                currentTagType = TAG_TYPE.NONE;
-                currentTagText = null;
+                boolean done = currentMapping != null &&
+                        currentMapping.type == SYMBOL_TYPE.GOAL;
+                currentDetection = null;
+                currentMapping = null;
 
                 if (done) {
                     findViewById(R.id.background_mask).setVisibility(View.VISIBLE);
@@ -154,34 +174,29 @@ public class GameActivity extends AppCompatActivity {
             }
         });
 
-        // TODO remove these hacks
-        SurfaceView sv = findViewById(R.id.camera_view);
-        sv.setOnLongClickListener(new View.OnLongClickListener() {
-            @Override
-            public boolean onLongClick(View view) {
-                if (HACK % 3 == 0) {
-                    currentTagType = TAG_TYPE.INFO;
-                    currentTagText = "Alice's office is down the corridor, past Bob's office";
-                } else if (HACK % 3 == 1) {
-                    currentTagType = TAG_TYPE.WRONG;
-                    currentTagText = "BOB's office";
-                } else {
-                    currentTagType = TAG_TYPE.GOAL;
-                    currentTagText = "Alice's office";
-                }
-                HACK++;
-                updateTagDisplay();
-                return true;
-            }
-        });
     }
 
+    /**
+     * Configure tag management and access
+     */
     private void updateTagDisplay() {
+        // Hide and exit if there is no current detection
+        if (currentDetection == null) {
+            findViewById(R.id.task_panel).setBackgroundResource(R.color.colorPrimary);
+            findViewById(R.id.tag_panel).setVisibility(View.GONE);
+            detecting = true;
+            return;
+        }
+
+        // Extract symbols from the conversion database
+        for (final SymbolMapping s : MAPPINGS)
+            if(currentDetection.id == s.id) currentMapping = s;
+
         // Apply correct colours
-        int colourId;
-        switch (currentTagType) {
+        int colourId = R.color.colorPrimary;
+        switch (currentMapping.type) {
             case EMPTY:
-                colourId = android.R.attr.textColor;
+                colourId = R.color.feedbackNone;
                 break;
             case INFO:
                 colourId = R.color.feedbackOrange;
@@ -192,24 +207,18 @@ public class GameActivity extends AppCompatActivity {
             case GOAL:
                 colourId = R.color.feedbackGreen;
                 break;
-            default:
-                colourId = R.color.colorPrimary;
         }
         findViewById(R.id.task_panel).setBackgroundResource(colourId);
         findViewById(R.id.tag_panel).setBackgroundResource(colourId);
 
-        // Hide and exit if there is no tag
-        if (currentTagType == TAG_TYPE.NONE) {
-            findViewById(R.id.tag_panel).setVisibility(View.GONE);
-            detecting = true;
-            return;
-        }
-
         // Update the icon and text for the tag info
         findViewById(R.id.tag_panel).setVisibility(View.VISIBLE);
-        ((ImageView) findViewById(R.id.tag_dismiss)).setImageResource((currentTagType == TAG_TYPE
-                .GOAL) ? R.drawable.done_24dp : R.drawable.close_24dp);
-        ((Button) findViewById(R.id.tag_info_button)).setText(currentTagText);
+        ((ImageView) findViewById(R.id.tag_dismiss)).setImageResource(
+                (currentMapping.type == SYMBOL_TYPE.GOAL) ?
+                        R.drawable.done_24dp : R.drawable.close_24dp);
+        ((Button) findViewById(R.id.tag_info_button)).setText(
+                (currentMapping.type == SYMBOL_TYPE.EMPTY) ?
+                        "<empty tag>" : currentMapping.text);
 
         // We have some tag info being displayed, turn detecting off
         detecting = false;
@@ -380,7 +389,6 @@ public class GameActivity extends AppCompatActivity {
     class ImageReaderCallback implements ImageReader.OnImageAvailableListener {
         @Override
         public void onImageAvailable(ImageReader imageReader) {
-            long tS = System.nanoTime();
             // Always get an image, ensuring it is closed even if we
             // terminate early
             Image i = imageReader.acquireLatestImage();
@@ -389,30 +397,25 @@ public class GameActivity extends AppCompatActivity {
                 i.close();
                 return;
             }
-            long tR = System.nanoTime();
 
             // Step into native code, passing the JPEG byte buffer down to be decoded and checked
             // for April Tags
             Image.Plane p = i.getPlanes()[0];
             byte[] bytes = new byte[p.getBuffer().remaining()];
             p.getBuffer().get(bytes);
-            long tB = System.nanoTime();
-            Detection d = searchForAprilTags(bytes, bytes.length);
-            if (d != null) {
-                Log.e("HuC", "Tag " + d.id + " detected @ " + Arrays
-                        .toString(d.coords()));
+            currentDetection = searchForAprilTags(bytes, bytes.length);
+            if (currentDetection != null) {
+                GameActivity.this.runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        updateTagDisplay();
+                    }
+                });
             }
-            long tD = System.nanoTime();
 
             // Clean up things when we are done
             i.close();
-            long tC = System.nanoTime();
-            Log.w("HuC", "Method took: " + ms(tC-tS) + "(tR:" + ms(tR-tS)
-                    + ",tB:" + ms(tB-tR) + ",tD:" + ms(tD-tB) + ",tC:" + ms
-                    (tC-tD) + ")");
         }
-
-        private double ms(long nano) { return nano/1000000; }
     }
 
     /**
