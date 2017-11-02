@@ -3,8 +3,6 @@ package com.humancues.humancuestaggame;
 import android.Manifest;
 import android.content.Context;
 import android.content.pm.PackageManager;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.ImageFormat;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
@@ -13,9 +11,10 @@ import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CameraMetadata;
 import android.hardware.camera2.CaptureRequest;
-import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.Image;
 import android.media.ImageReader;
+import android.os.Handler;
+import android.os.HandlerThread;
 import android.support.annotation.NonNull;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
@@ -43,20 +42,25 @@ public class GameActivity extends AppCompatActivity {
     // Camera information
     private static final int CAMERA_PERMISSIONS = 0;
     private final Size cameraSize = new Size(1280, 720);
+    private CameraManager cameraManager = null;
     private String cameraID = null;
     private CameraCharacteristics cameraCharacteristics = null;
-    private CameraDevice currentCameraDevice = null;
-    private CaptureRequest currentCaptureRequest = null;
+    private CameraDevice cameraDevice = null;
+    private CaptureRequest cameraCaptureRequest = null;
+    private CameraCaptureSession cameraCaptureSession = null;
 
     private final int imageFormat = ImageFormat.JPEG;
     private ImageReader imageReader = null;
 
+    // Background thread for processing
+    private HandlerThread cameraThread = null;
+    private Handler cameraHandler = null;
+
     // Tag detection information for the app
-    enum TAG_TYPE { NONE, GOAL, INFO, WRONG };
+    public boolean detecting = false;
+    enum TAG_TYPE { NONE, EMPTY, INFO, WRONG, GOAL };
     private TAG_TYPE currentTagType = TAG_TYPE.NONE;
     private String currentTagText = null;
-
-    private int HACK = 0;
 
     // Experimental trial configurations
     public String[] listExperiments = {"Experiment 1", "Experiment 2", "TODO"};
@@ -68,6 +72,8 @@ public class GameActivity extends AppCompatActivity {
         System.loadLibrary("native-lib");
     }
 
+    public int HACK = 0;
+
     /**
      * Lifecycle implementations
      */
@@ -76,16 +82,14 @@ public class GameActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_game);
 
-        // Reconstruct the adapters
+        // Configure the interface (interactivity and content)
         refreshExperimentSpinner();
-
-        // Configure the surface view
-        configureCameraView();
-
-        // Configure the interface's interactivity
         configureInteractivity();
 
-        // Get the AprilTag detector up and ready to go
+        // Start everything to help with image acquisition and processing
+        startCameraThread();
+        initialiseCameraInfo();
+        configureCameraView();
         initAprilTags();
     }
 
@@ -101,7 +105,7 @@ public class GameActivity extends AppCompatActivity {
             case CAMERA_PERMISSIONS: {
                 if (grantResults.length > 0 && grantResults[0] ==
                         PackageManager.PERMISSION_GRANTED) {
-                    initialiseCamera();
+                    initialiseCameraInfo();
                 } else {
                     Toast.makeText(this, "The app failed to acquire camera " +
                                     "permissions",
@@ -176,8 +180,8 @@ public class GameActivity extends AppCompatActivity {
         // Apply correct colours
         int colourId;
         switch (currentTagType) {
-            case GOAL:
-                colourId = R.color.feedbackGreen;
+            case EMPTY:
+                colourId = android.R.attr.textColor;
                 break;
             case INFO:
                 colourId = R.color.feedbackOrange;
@@ -185,28 +189,41 @@ public class GameActivity extends AppCompatActivity {
             case WRONG:
                 colourId = R.color.feedbackRed;
                 break;
+            case GOAL:
+                colourId = R.color.feedbackGreen;
+                break;
             default:
                 colourId = R.color.colorPrimary;
         }
         findViewById(R.id.task_panel).setBackgroundResource(colourId);
         findViewById(R.id.tag_panel).setBackgroundResource(colourId);
 
-        // Act and exit early if tag type is NONE
+        // Hide and exit if there is no tag
         if (currentTagType == TAG_TYPE.NONE) {
             findViewById(R.id.tag_panel).setVisibility(View.GONE);
+            detecting = true;
             return;
         }
-        findViewById(R.id.tag_panel).setVisibility(View.VISIBLE);
 
         // Update the icon and text for the tag info
+        findViewById(R.id.tag_panel).setVisibility(View.VISIBLE);
         ((ImageView) findViewById(R.id.tag_dismiss)).setImageResource((currentTagType == TAG_TYPE
                 .GOAL) ? R.drawable.done_24dp : R.drawable.close_24dp);
         ((Button) findViewById(R.id.tag_info_button)).setText(currentTagText);
+
+        // We have some tag info being displayed, turn detecting off
+        detecting = false;
     }
 
     /**
-     * Camera surface view control
+     * Camera view and processing control
      */
+    private void startCameraThread() {
+        cameraThread = new HandlerThread("CameraBackground");
+        cameraThread.start();
+        cameraHandler = new Handler(cameraThread.getLooper());
+    }
+
     private void configureCameraView() {
         SurfaceView cv = findViewById(R.id.camera_view);
         cv.getHolder().addCallback(new SurfaceHolder.Callback() {
@@ -221,10 +238,11 @@ public class GameActivity extends AppCompatActivity {
                 imageReader = ImageReader.newInstance(cameraSize.getWidth(),
                         cameraSize.getHeight(), imageFormat, 2);
                 imageReader.setOnImageAvailableListener(new
-                        ImageReaderCallback(), null);
+                        ImageReaderCallback(), cameraHandler);
 
-                // Initialise the camera
-                initialiseCamera();
+                // This is run every time the app is resumed, so attach to
+                // the camera here
+                attachToCamera();
             }
 
             @Override
@@ -234,7 +252,8 @@ public class GameActivity extends AppCompatActivity {
 
             @Override
             public void surfaceDestroyed(SurfaceHolder surfaceHolder) {
-
+                // Detach from the camera
+                detachFromCamera();
             }
         });
     }
@@ -242,10 +261,7 @@ public class GameActivity extends AppCompatActivity {
     /**
      * Camera control functions
      */
-    private void initialiseCamera() {
-        // Do not do this if we already have a camera!
-        //if (currentCameraDevice != null) return;
-
+    private void initialiseCameraInfo() {
         // Ensure that camera access permissions exist
         int permission = ContextCompat.checkSelfPermission(this, Manifest
                 .permission.CAMERA);
@@ -256,12 +272,12 @@ public class GameActivity extends AppCompatActivity {
         }
 
         // Attempt to get the ID of the back facing camera
-        CameraManager cm = (CameraManager) this.getSystemService(Context
-                .CAMERA_SERVICE);
         try {
-            String[] cameras = cm.getCameraIdList();
+            cameraManager = (CameraManager) this.getSystemService(Context
+                    .CAMERA_SERVICE);
+            String[] cameras = cameraManager.getCameraIdList();
             for (final String s : cameras) {
-                CameraCharacteristics cc = cm.getCameraCharacteristics(s);
+                CameraCharacteristics cc = cameraManager.getCameraCharacteristics(s);
                 if (cc.get(CameraCharacteristics.LENS_FACING) ==
                         CameraMetadata.LENS_FACING_BACK) {
                     cameraID = s;
@@ -272,32 +288,44 @@ public class GameActivity extends AppCompatActivity {
         } catch (Exception e) {
             Toast.makeText(this, "Back facing camera access failed!", Toast
                     .LENGTH_LONG).show();
-            return;
         }
+    }
 
-        StreamConfigurationMap scm = cameraCharacteristics.get
-                (CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-        for (final int i : scm.getOutputFormats()) {
-            Log.e("HuC", "Output Format: " + i);
-            Log.e("HuC", "Output Sizes: " + Arrays.toString(scm
-                    .getOutputSizes(i)));
-        }
-
-        // We have the ID of the back facing camera, now
+    private void attachToCamera() {
         try {
-            cm.openCamera(cameraID, new CameraDeviceCallback(), null);
+            // Bail if we don't have the valid info (i.e. initialise camera info
+            // has not been called), or permissions fail
+            if (cameraManager == null || cameraID == null || cameraCharacteristics
+                    == null || ContextCompat.checkSelfPermission(this, Manifest
+                    .permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                throw new CameraAccessException(CameraAccessException.CAMERA_ERROR);
+            }
+            cameraManager.openCamera(cameraID, new CameraDeviceCallback(),
+                    cameraHandler);
         } catch (CameraAccessException e) {
             Toast.makeText(this, "The app failed to access the camera",
                     Toast.LENGTH_LONG).show();
-            return;
         }
+    }
+
+    private void detachFromCamera() {
+        if (cameraCaptureSession != null) {
+            try {
+                cameraCaptureSession.stopRepeating();
+                cameraCaptureSession.abortCaptures();
+            } catch (Exception e) {}
+            cameraCaptureSession.close();
+        }
+        if (cameraDevice != null) cameraDevice.close();
+        cameraCaptureSession = null;
+        cameraDevice = null;
     }
 
     class CameraDeviceCallback extends CameraDevice.StateCallback {
         @Override
         public void onOpened(@NonNull CameraDevice cameraDevice) {
             try {
-                currentCameraDevice = cameraDevice;
+                GameActivity.this.cameraDevice = cameraDevice;
 
                 // Get a list of the Surfaces we want to push the camera data to
                 List<Surface> ls = Arrays.asList(((SurfaceView) findViewById
@@ -308,11 +336,11 @@ public class GameActivity extends AppCompatActivity {
                 CaptureRequest.Builder b = cameraDevice.createCaptureRequest
                         (CameraDevice.TEMPLATE_PREVIEW);
                 for (final Surface s : ls) b.addTarget(s);
-                currentCaptureRequest = b.build();
+                cameraCaptureRequest = b.build();
 
                 // Generate the capture session
                 cameraDevice.createCaptureSession(ls, new
-                        CameraSessionCallback(), null);
+                        CameraSessionCallback(), cameraHandler);
             } catch (CameraAccessException e) {
                 Log.e("HuC", "Device failed to access camera...");
             }
@@ -320,7 +348,7 @@ public class GameActivity extends AppCompatActivity {
 
         @Override
         public void onDisconnected(@NonNull CameraDevice cameraDevice) {
-
+            detachFromCamera();
         }
 
         @Override
@@ -333,9 +361,11 @@ public class GameActivity extends AppCompatActivity {
         @Override
         public void onConfigured(@NonNull CameraCaptureSession cameraCaptureSession) {
             try {
+                GameActivity.this.cameraCaptureSession = cameraCaptureSession;
+
                 // Start capturing
-                cameraCaptureSession.setRepeatingRequest(currentCaptureRequest,
-                        null, null);
+                cameraCaptureSession.setRepeatingRequest(cameraCaptureRequest,
+                        null, cameraHandler);
             } catch (CameraAccessException e) {
                 Log.e("HuC", "Session failed to access camera...");
             }
@@ -350,24 +380,39 @@ public class GameActivity extends AppCompatActivity {
     class ImageReaderCallback implements ImageReader.OnImageAvailableListener {
         @Override
         public void onImageAvailable(ImageReader imageReader) {
-            // Attempt to get an image, exiting if that failed
+            long tS = System.nanoTime();
+            // Always get an image, ensuring it is closed even if we
+            // terminate early
             Image i = imageReader.acquireLatestImage();
             if (i == null) return;
+            if (!detecting) {
+                i.close();
+                return;
+            }
+            long tR = System.nanoTime();
 
             // Step into native code, passing the JPEG byte buffer down to be decoded and checked
             // for April Tags
             Image.Plane p = i.getPlanes()[0];
             byte[] bytes = new byte[p.getBuffer().remaining()];
             p.getBuffer().get(bytes);
+            long tB = System.nanoTime();
             Detection d = searchForAprilTags(bytes, bytes.length);
             if (d != null) {
                 Log.e("HuC", "Tag " + d.id + " detected @ " + Arrays
                         .toString(d.coords()));
             }
+            long tD = System.nanoTime();
 
             // Clean up things when we are done
             i.close();
+            long tC = System.nanoTime();
+            Log.w("HuC", "Method took: " + ms(tC-tS) + "(tR:" + ms(tR-tS)
+                    + ",tB:" + ms(tB-tR) + ",tD:" + ms(tD-tB) + ",tC:" + ms
+                    (tC-tD) + ")");
         }
+
+        private double ms(long nano) { return nano/1000000; }
     }
 
     /**
@@ -410,8 +455,6 @@ public class GameActivity extends AppCompatActivity {
      * A native method that is implemented by the 'native-lib' native library,
      * which is packaged with this application.
      */
-    public native String stringFromJNI();
-
     public native void initAprilTags();
 
     public native void cleanupAprilTags();

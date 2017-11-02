@@ -10,6 +10,23 @@
 
 // Dirty globals
 apriltag_detector *detector;
+const bool DEBUG = 0;
+
+extern "C" double ms(struct timespec *ts) {
+    return ts->tv_sec * 1000 + ts->tv_nsec / 1000000.0;
+}
+
+extern "C" void tdiff(struct timespec *start, struct timespec *stop,
+                      struct timespec *result) {
+    if ((stop->tv_nsec - start->tv_nsec) < 0) {
+        result->tv_sec = stop->tv_sec - start->tv_sec - 1;
+        result->tv_nsec = stop->tv_nsec - start->tv_nsec + 1000000000;
+    } else {
+        result->tv_sec = stop->tv_sec - start->tv_sec;
+        result->tv_nsec = stop->tv_nsec - start->tv_nsec;
+    }
+    return;
+}
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_humancues_humancuestaggame_GameActivity_stringFromJNI(
@@ -27,6 +44,7 @@ Java_com_humancues_humancuestaggame_GameActivity_initAprilTags(
 
     // Configure the detector
     apriltag_detector_add_family(detector, tag36h11_create());
+    detector->quad_decimate = 8.0;
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -39,29 +57,49 @@ Java_com_humancues_humancuestaggame_GameActivity_cleanupAprilTags(
 extern "C" JNIEXPORT jobject JNICALL
 Java_com_humancues_humancuestaggame_GameActivity_searchForAprilTags(
         JNIEnv *env, jobject, jbyteArray bytes, jint nbytes) {
+    struct timespec tS, tP, tI, tD, tO, rA, rB, rC, rD, rE;
+    if (DEBUG) clock_gettime(CLOCK_MONOTONIC, &tS);
+
     // Get a pointer to the actual data
     jbyte *dataPtr = env->GetByteArrayElements(bytes, NULL);
+
+    if (DEBUG) clock_gettime(CLOCK_MONOTONIC, &tP);
 
     // Construct the image structure from the byte array
     int error;
     pjpeg_t *jpg = pjpeg_create_from_buffer((uint8_t *) dataPtr, nbytes, 0, &error);
     image_u8_t *img = pjpeg_to_u8_baseline(jpg);
 
+    if (DEBUG) clock_gettime(CLOCK_MONOTONIC, &tI);
+
     // Attempt the tag detection (bailing if we don't find anything)
     zarray_t *detections = apriltag_detector_detect(detector, img);
-    if (zarray_size(detections) == 0)
+    if (DEBUG) clock_gettime(CLOCK_MONOTONIC, &tD);
+    if (zarray_size(detections) == 0) {
+        if (DEBUG) {
+            tdiff(&tS, &tD, &rA);
+            tdiff(&tS, &tP, &rB);
+            tdiff(&tP, &tI, &rC);
+            tdiff(&tI, &tD, &rD);
+            __android_log_print(ANDROID_LOG_WARN, "HuC",
+                                "cMethod took: %f (tP:%f,tI:%f,tD:%f)",
+                                ms(&rA), ms(&rB), ms(&rC), ms(&rD)
+            );
+        }
         return NULL;
+    }
 
     // Process the first detection, and extract all of the required information
     apriltag_detection_t *detection;
     zarray_get(detections, 0, &detection);
-
-//    __android_log_print(ANDROID_LOG_ERROR, "HuC",
-//                        "c detect %d @ %f,%f,%f,%f,%f,%f,%f,%f", detection->id,
-//                        detection->p[0][0], detection->p[0][1],
-//                        detection->p[1][0], detection->p[1][1],
-//                        detection->p[2][0], detection->p[2][1],
-//                        detection->p[3][0], detection->p[3][1]);
+    if (DEBUG) {
+    __android_log_print(ANDROID_LOG_WARN, "HuC",
+                        "c detect %d @ %f,%f,%f,%f,%f,%f,%f,%f", detection->id,
+                        detection->p[0][0], detection->p[0][1],
+                        detection->p[1][0], detection->p[1][1],
+                        detection->p[2][0], detection->p[2][1],
+                        detection->p[3][0], detection->p[3][1]);
+    }
 
     // Construct the return object
     jclass detectionClass = env->FindClass
@@ -87,8 +125,21 @@ Java_com_humancues_humancuestaggame_GameActivity_searchForAprilTags(
     env->SetDoubleField(obj, fieldY3, detection->p[2][1]);
     env->SetDoubleField(obj, fieldX4, detection->p[3][0]);
     env->SetDoubleField(obj, fieldY4, detection->p[3][1]);
+    if (DEBUG) clock_gettime(CLOCK_MONOTONIC, &tO);
 
     // Clean up and return
     apriltag_detections_destroy(detections);
+    if (DEBUG) {
+        tdiff(&tS, &tO, &rA);
+        tdiff(&tS, &tP, &rB);
+        tdiff(&tP, &tI, &rC);
+        tdiff(&tI, &tD, &rD);
+        tdiff(&tD, &tO, &rE);
+        __android_log_print(ANDROID_LOG_WARN, "HuC",
+                            "cMethod took: %f (tP:%f,tI:%f,tD:%f,tO:%f)",
+                            ms(&rA), ms(&rB), ms(&rC), ms(&rD), ms(&rE)
+        );
+    }
     return obj;
 }
+
