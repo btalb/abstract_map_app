@@ -1,0 +1,530 @@
+package com.humancues.humancuestaggame;
+
+import android.Manifest;
+import android.content.Context;
+import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.ImageFormat;
+import android.graphics.Matrix;
+import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffXfermode;
+import android.graphics.RectF;
+import android.hardware.camera2.CameraAccessException;
+import android.hardware.camera2.CameraCaptureSession;
+import android.hardware.camera2.CameraCharacteristics;
+import android.hardware.camera2.CameraDevice;
+import android.hardware.camera2.CameraManager;
+import android.hardware.camera2.CameraMetadata;
+import android.hardware.camera2.CaptureRequest;
+import android.media.Image;
+import android.media.ImageReader;
+import android.os.Handler;
+import android.os.HandlerThread;
+import android.support.annotation.NonNull;
+import android.support.v4.app.ActivityCompat;
+import android.support.v4.content.ContextCompat;
+import android.support.v7.app.AppCompatActivity;
+import android.os.Bundle;
+import android.util.Log;
+import android.util.Size;
+import android.view.Surface;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
+import android.view.View;
+import android.widget.ArrayAdapter;
+import android.widget.Button;
+import android.widget.ImageButton;
+import android.widget.ImageView;
+import android.widget.Spinner;
+import android.widget.TextView;
+import android.widget.Toast;
+import android.widget.ViewSwitcher;
+
+import java.util.Arrays;
+import java.util.List;
+
+public class GameActivity extends AppCompatActivity {
+    // Camera information
+    private static final int CAMERA_PERMISSIONS = 0;
+    private final Size cameraSize = new Size(1280, 720);
+    private CameraManager cameraManager = null;
+    private String cameraID = null;
+    private CameraCharacteristics cameraCharacteristics = null;
+    private CameraDevice cameraDevice = null;
+    private CaptureRequest cameraCaptureRequest = null;
+    private CameraCaptureSession cameraCaptureSession = null;
+
+    private final int imageFormat = ImageFormat.JPEG;
+    private ImageReader imageReader = null;
+
+    // Background thread for processing
+    private HandlerThread cameraThread = null;
+    private Handler cameraHandler = null;
+
+    // Tag detection information for the app
+    private boolean detecting = false;
+    private Detection currentDetection = null;
+
+    // Experimental trial configurations
+    public String[] listExperiments = {"Experiment 1", "Experiment 2", "TODO"};
+    public String[] listGoals = {"Alice's office",
+            "Bob's office"};
+    private String currentGoal = "Alice's office";
+
+    // Symbol mapping
+    // TODO do properly...
+    enum SYMBOL_TYPE { EMPTY, INFO, WRONG, GOAL };
+    private class SymbolMapping {
+        public int id;
+        public SYMBOL_TYPE type;
+        public String text;
+
+        SymbolMapping(int id, SYMBOL_TYPE type, String text) {
+            this.id = id;
+            this.type = type;
+            this.text = text;
+        }
+
+        public int correspondingColour() {
+            int colourId = R.color.colorPrimary;
+            switch (currentMapping.type) {
+                case EMPTY:
+                    return R.color.feedbackNone;
+                case INFO:
+                    return R.color.feedbackOrange;
+                case WRONG:
+                    return R.color.feedbackRed;
+                case GOAL:
+                    return R.color.feedbackGreen;
+                default:
+                    return R.color.colorPrimary;
+            }
+        }
+    }
+    private final SymbolMapping[] MAPPINGS = {
+            new SymbolMapping(0, SYMBOL_TYPE.WRONG, "Bob's office"),
+            new SymbolMapping(1, SYMBOL_TYPE.INFO, "Alice's office is down " +
+                    "the corridor, past Bob's office"),
+            new SymbolMapping(2, SYMBOL_TYPE.EMPTY, null),
+            new SymbolMapping(3, SYMBOL_TYPE.GOAL, "Alice's office"),
+    };
+    private SymbolMapping currentMapping = null;
+
+    // Drawing variables
+    private Paint highlightPaint = null;
+
+    static {
+        System.loadLibrary("native-lib");
+    }
+
+    /**
+     * Lifecycle implementations
+     */
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_game);
+
+        // Configure the interface (interactivity and content)
+        initialiseDrawing();
+        refreshExperimentSpinner();
+        configureInteractivity();
+
+        // Start everything to help with image acquisition and processing
+        startCameraThread();
+        initialiseCameraInfo();
+        configureCameraView();
+        initAprilTags();
+    }
+
+    @Override
+    protected void onDestroy() {
+        cleanupAprilTags();
+        super.onDestroy();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        switch (requestCode) {
+            case CAMERA_PERMISSIONS: {
+                if (grantResults.length > 0 && grantResults[0] ==
+                        PackageManager.PERMISSION_GRANTED) {
+                    initialiseCameraInfo();
+                } else {
+                    Toast.makeText(this, "The app failed to acquire camera " +
+                                    "permissions",
+                            Toast.LENGTH_LONG).show();
+                }
+                return;
+            }
+        }
+    }
+
+    /**
+     * Configure all of the button interactivity
+     */
+    private void configureInteractivity() {
+        Button b = findViewById(R.id.start_button);
+        b.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                // Pull all state from the intro screen UI
+                // TODO
+
+                // Update the UI
+                ViewSwitcher vs = findViewById(R.id.switcher);
+                vs.showNext();
+
+                ((TextView) findViewById(R.id.task_info)).setText("find " + currentGoal);
+                findViewById(R.id.background_mask).setVisibility(View.GONE);
+                updateTagDisplay();
+            }
+        });
+
+        ImageButton ib = findViewById(R.id.tag_dismiss);
+        ib.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                boolean done = currentMapping != null &&
+                        currentMapping.type == SYMBOL_TYPE.GOAL;
+                currentDetection = null;
+                currentMapping = null;
+
+                if (done) {
+                    findViewById(R.id.detection_view).setVisibility(View.GONE);
+                    findViewById(R.id.background_mask).setVisibility(View.VISIBLE);
+                    ((ViewSwitcher) findViewById(R.id.switcher)).showPrevious();
+                } else {
+                    updateTagDisplay();
+                }
+            }
+        });
+
+    }
+
+    /**
+     * Configure tag management and access
+     */
+    private void updateTagDisplay() {
+        // Hide and exit if there is no current detection
+        if (currentDetection == null) {
+            findViewById(R.id.task_panel).setBackgroundResource(R.color.colorPrimary);
+            findViewById(R.id.tag_panel).setVisibility(View.GONE);
+            findViewById(R.id.detection_view).setVisibility(View.GONE);
+            detecting = true;
+            return;
+        }
+
+        // Apply correct colours
+        final int colourId = currentMapping.correspondingColour();
+        findViewById(R.id.task_panel).setBackgroundResource(colourId);
+        findViewById(R.id.tag_panel).setBackgroundResource(colourId);
+
+        // Update the icon and text for the tag info
+        findViewById(R.id.tag_panel).setVisibility(View.VISIBLE);
+        ((ImageView) findViewById(R.id.tag_dismiss)).setImageResource(
+                (currentMapping.type == SYMBOL_TYPE.GOAL) ?
+                        R.drawable.done_24dp : R.drawable.close_24dp);
+        ((Button) findViewById(R.id.tag_info_button)).setText(
+                (currentMapping.type == SYMBOL_TYPE.EMPTY) ?
+                        "<empty tag>" : currentMapping.text);
+
+        // Show the detection view
+        findViewById(R.id.detection_view).setVisibility(View.VISIBLE);
+
+        // We have some tag info being displayed, turn detecting off
+        detecting = false;
+    }
+
+    /**
+     * Camera view and processing control
+     */
+    private void startCameraThread() {
+        cameraThread = new HandlerThread("CameraBackground");
+        cameraThread.start();
+        cameraHandler = new Handler(cameraThread.getLooper());
+    }
+
+    private void configureCameraView() {
+        SurfaceView cv = findViewById(R.id.camera_view);
+        cv.getHolder().addCallback(new SurfaceHolder.Callback() {
+            @Override
+            public void surfaceCreated(SurfaceHolder surfaceHolder) {
+                // Set size and format to match what we will be getting out
+                // of the camera
+                surfaceHolder.setFixedSize(cameraSize.getWidth(), cameraSize
+                        .getHeight());
+
+                // Create the image reader
+                imageReader = ImageReader.newInstance(cameraSize.getWidth(),
+                        cameraSize.getHeight(), imageFormat, 2);
+                imageReader.setOnImageAvailableListener(new
+                        ImageReaderCallback(), cameraHandler);
+
+                // This is run every time the app is resumed, so attach to
+                // the camera here
+                attachToCamera();
+            }
+
+            @Override
+            public void surfaceChanged(SurfaceHolder surfaceHolder, int i, int i1, int i2) {
+
+            }
+
+            @Override
+            public void surfaceDestroyed(SurfaceHolder surfaceHolder) {
+                // Detach from the camera
+                detachFromCamera();
+            }
+        });
+    }
+
+    /**
+     * Camera control functions
+     */
+    private void initialiseCameraInfo() {
+        // Ensure that camera access permissions exist
+        int permission = ContextCompat.checkSelfPermission(this, Manifest
+                .permission.CAMERA);
+        if (permission != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, new String[]{Manifest
+                    .permission.CAMERA}, CAMERA_PERMISSIONS);
+            return;
+        }
+
+        // Attempt to get the ID of the back facing camera
+        try {
+            cameraManager = (CameraManager) this.getSystemService(Context
+                    .CAMERA_SERVICE);
+            String[] cameras = cameraManager.getCameraIdList();
+            for (final String s : cameras) {
+                CameraCharacteristics cc = cameraManager.getCameraCharacteristics(s);
+                if (cc.get(CameraCharacteristics.LENS_FACING) ==
+                        CameraMetadata.LENS_FACING_BACK) {
+                    cameraID = s;
+                    cameraCharacteristics = cc;
+                }
+            }
+            if (cameraID == null) throw new Exception();
+        } catch (Exception e) {
+            Toast.makeText(this, "Back facing camera access failed!", Toast
+                    .LENGTH_LONG).show();
+        }
+    }
+
+    private void attachToCamera() {
+        try {
+            // Bail if we don't have the valid info (i.e. initialise camera info
+            // has not been called), or permissions fail
+            if (cameraManager == null || cameraID == null || cameraCharacteristics
+                    == null || ContextCompat.checkSelfPermission(this, Manifest
+                    .permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                throw new CameraAccessException(CameraAccessException.CAMERA_ERROR);
+            }
+            cameraManager.openCamera(cameraID, new CameraDeviceCallback(),
+                    cameraHandler);
+        } catch (CameraAccessException e) {
+            Toast.makeText(this, "The app failed to access the camera",
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void detachFromCamera() {
+        if (cameraCaptureSession != null) {
+            try {
+                cameraCaptureSession.stopRepeating();
+                cameraCaptureSession.abortCaptures();
+            } catch (Exception e) {}
+            cameraCaptureSession.close();
+        }
+        if (cameraDevice != null) cameraDevice.close();
+        cameraCaptureSession = null;
+        cameraDevice = null;
+    }
+
+    class CameraDeviceCallback extends CameraDevice.StateCallback {
+        @Override
+        public void onOpened(@NonNull CameraDevice cameraDevice) {
+            try {
+                GameActivity.this.cameraDevice = cameraDevice;
+
+                // Get a list of the Surfaces we want to push the camera data to
+                List<Surface> ls = Arrays.asList(((SurfaceView) findViewById
+                        (R.id.camera_view)).getHolder().getSurface(),
+                        imageReader.getSurface());
+
+                // Build a capture request, with the target surfaces included
+                CaptureRequest.Builder b = cameraDevice.createCaptureRequest
+                        (CameraDevice.TEMPLATE_PREVIEW);
+                for (final Surface s : ls) b.addTarget(s);
+                cameraCaptureRequest = b.build();
+
+                // Generate the capture session
+                cameraDevice.createCaptureSession(ls, new
+                        CameraSessionCallback(), cameraHandler);
+            } catch (CameraAccessException e) {
+                Log.e("HuC", "Device failed to access camera...");
+            }
+        }
+
+        @Override
+        public void onDisconnected(@NonNull CameraDevice cameraDevice) {
+            detachFromCamera();
+        }
+
+        @Override
+        public void onError(@NonNull CameraDevice cameraDevice, int i) {
+
+        }
+    }
+
+    class CameraSessionCallback extends CameraCaptureSession.StateCallback {
+        @Override
+        public void onConfigured(@NonNull CameraCaptureSession cameraCaptureSession) {
+            try {
+                GameActivity.this.cameraCaptureSession = cameraCaptureSession;
+
+                // Start capturing
+                cameraCaptureSession.setRepeatingRequest(cameraCaptureRequest,
+                        null, cameraHandler);
+            } catch (CameraAccessException e) {
+                Log.e("HuC", "Session failed to access camera...");
+            }
+        }
+
+        @Override
+        public void onConfigureFailed(@NonNull CameraCaptureSession cameraCaptureSession) {
+
+        }
+    }
+
+    class ImageReaderCallback implements ImageReader.OnImageAvailableListener {
+        @Override
+        public void onImageAvailable(ImageReader imageReader) {
+            // Always get an image, ensuring it is closed even if we
+            // terminate early
+            Image i = imageReader.acquireLatestImage();
+            if (i == null) return;
+            if (!detecting) {
+                i.close();
+                return;
+            }
+
+            // Step into native code, passing the JPEG byte buffer down to be decoded and checked
+            // for April Tags
+            Image.Plane p = i.getPlanes()[0];
+            byte[] bytes = new byte[p.getBuffer().remaining()];
+            p.getBuffer().get(bytes);
+            currentDetection = searchForAprilTags(bytes, bytes.length);
+            if (currentDetection != null) {
+                // Extract symbols from the conversion database
+                for (final SymbolMapping s : MAPPINGS)
+                    if(currentDetection.id == s.id) currentMapping = s;
+
+                // Get a mutable copy of the bitmap
+                Bitmap bm = BitmapFactory.decodeByteArray(bytes, 0,
+                        bytes.length).copy(Bitmap.Config.ARGB_8888, true);
+
+                // Configure the highlight paint to the type of detection
+                highlightPaint.setColor(GameActivity.this.getResources()
+                        .getColor(currentMapping.correspondingColour()));
+
+                // Draw to the canvas
+                final Path box = currentDetection.path();
+                final Canvas c = new Canvas(bm);
+                highlightPaint.setStyle(Paint.Style.STROKE);
+                c.drawPath(box, highlightPaint);
+                highlightPaint.setStyle(Paint.Style.FILL);
+                highlightPaint.setAlpha(128);
+                c.drawPath(box, highlightPaint);
+
+                // Finish by rotating the bitmap 90 degress
+                Matrix m = new Matrix();
+                m.postRotate(90);
+                final Bitmap bmRotated = Bitmap.createBitmap(bm, 0, 0,
+                        bm.getWidth(), bm.getHeight(), m, true);
+                GameActivity.this.runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        ((ImageView) findViewById(R.id.detection_view))
+                                .setImageBitmap(bmRotated);
+                        updateTagDisplay();
+                    }
+                });
+            }
+
+            // Clean up things when we are done
+            i.close();
+        }
+    }
+
+    /**
+     * Drawing helpers
+     */
+    private void initialiseDrawing() {
+        highlightPaint = new Paint();
+        highlightPaint.setAntiAlias(true);
+        highlightPaint.setStrokeWidth(5);
+    }
+
+    /**
+     * Control the spinner content
+     */
+    private void refreshExperimentSpinner() {
+        // Configure the spinner
+        Spinner s = findViewById(R.id.experiment_spinner);
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, listExperiments);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        s.setAdapter(adapter);
+
+        // Always update the goal spinner
+        refreshGoalSpinner();
+    }
+
+    private void refreshGoalSpinner() {
+        // Configure the spinner
+        Spinner s = findViewById(R.id.goal_spinner);
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, listGoals);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        s.setAdapter(adapter);
+    }
+
+    /**
+     * Detection representation
+     */
+    public class Detection {
+        public int id;
+        public double x1, y1, x2, y2, x3, y3, x4, y4;
+
+        public double[] coords() {
+            return new double[] {x1, y1, x2, y2, x3, y3, x4, y4};
+        }
+
+        public Path path() {
+            Path p = new Path();
+            p.moveTo((float) x1, (float) y1);
+            p.lineTo((float) x2, (float) y2);
+            p.lineTo((float) x3, (float) y3);
+            p.lineTo((float) x4, (float) y4);
+            p.close();
+            return p;
+        }
+    }
+
+    /**
+     * A native method that is implemented by the 'native-lib' native library,
+     * which is packaged with this application.
+     */
+    public native void initAprilTags();
+
+    public native void cleanupAprilTags();
+
+    public native Detection searchForAprilTags(byte[] bytes, int nbytes);
+}
