@@ -209,8 +209,16 @@ public class GameActivity extends AppCompatActivity {
         b.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                // Pull all state from the intro screen UI
-                // TODO
+                // Pull all state from the intro screen UI (shouldn't need to redo this, but lets
+                // just do it again for overkill...
+                current_experiment = available_experiments.get(((Spinner) findViewById(R.id
+                        .experiment_spinner))
+                        .getSelectedItemPosition());
+                current_experiment.goal = current_experiment.labels.get(((Spinner) findViewById(R.id
+                        .goal_spinner)).getSelectedItemPosition());
+
+                Toast.makeText(GameActivity.this, "Starting experiment '" + current_experiment
+                        .name + "', with goal: " + current_experiment.goal, Toast.LENGTH_LONG).show();
 
                 // Update the UI
                 ViewSwitcher vs = findViewById(R.id.switcher);
@@ -227,6 +235,19 @@ public class GameActivity extends AppCompatActivity {
             @Override
             public void onItemSelected(AdapterView<?> adapterView, View view, int i, long l) {
                 selectExperiment(i);
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> adapterView) {
+
+            }
+        });
+
+        Spinner s_goal = findViewById(R.id.goal_spinner);
+        s_goal.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> adapterView, View view, int i, long l) {
+                selectGoal(i);
             }
 
             @Override
@@ -605,6 +626,10 @@ public class GameActivity extends AppCompatActivity {
         refreshGoalSpinner();
     }
 
+    private void selectGoal(int number) {
+        current_experiment.goal = current_experiment.labels.get(number);
+    }
+
     private void refreshExperimentSpinner() {
         // Configure the spinner
         Spinner s = findViewById(R.id.experiment_spinner);
@@ -628,6 +653,9 @@ public class GameActivity extends AppCompatActivity {
                 android.R.layout.simple_spinner_item, current_experiment.labels);
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         s.setAdapter(adapter);
+
+        // Always select the first goal by default
+        selectGoal(0);
     }
 
     /**
