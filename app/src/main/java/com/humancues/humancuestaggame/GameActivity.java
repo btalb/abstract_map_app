@@ -3,17 +3,14 @@ package com.humancues.humancuestaggame;
 import android.Manifest;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.content.res.AssetManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
-import android.graphics.Color;
 import android.graphics.ImageFormat;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
-import android.graphics.PorterDuff;
-import android.graphics.PorterDuffXfermode;
-import android.graphics.RectF;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
@@ -36,6 +33,7 @@ import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
+import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.ImageButton;
@@ -45,78 +43,116 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.ViewSwitcher;
 
+import org.w3c.dom.Document;
+import org.w3c.dom.NamedNodeMap;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+
+import java.io.File;
+import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
 
 public class GameActivity extends AppCompatActivity {
     // Camera information
     private static final int CAMERA_PERMISSIONS = 0;
-    private final Size cameraSize = new Size(1280, 720);
-    private CameraManager cameraManager = null;
-    private String cameraID = null;
-    private CameraCharacteristics cameraCharacteristics = null;
-    private CameraDevice cameraDevice = null;
-    private CaptureRequest cameraCaptureRequest = null;
-    private CameraCaptureSession cameraCaptureSession = null;
+    private final Size camera_size = new Size(1280, 720);
+    private CameraManager camera_manager = null;
+    private String camera_id = null;
+    private CameraCharacteristics camera_characteristics = null;
+    private CameraDevice camera_device = null;
+    private CaptureRequest camera_capture_request = null;
+    private CameraCaptureSession camera_capture_session = null;
 
-    private final int imageFormat = ImageFormat.JPEG;
-    private ImageReader imageReader = null;
+    private final int IMAGE_FORMAT = ImageFormat.JPEG;
+    private ImageReader image_reader = null;
 
     // Background thread for processing
-    private HandlerThread cameraThread = null;
-    private Handler cameraHandler = null;
+    private HandlerThread camera_thread = null;
+    private Handler camera_handler = null;
 
     // Tag detection information for the app
     private boolean detecting = false;
-    private Detection currentDetection = null;
+    private Detection current_detection = null;
 
-    // Experimental trial configurations
-    public String[] listExperiments = {"Experiment 1", "Experiment 2", "TODO"};
-    public String[] listGoals = {"Alice's office",
-            "Bob's office"};
-    private String currentGoal = "Alice's office";
+    // Experimental trial configurations (static)
+    public final String EXPERIMENTS_FOLDER = "human_cues_tag_experiments";
 
-    // Symbol mapping
-    // TODO do properly...
-    enum SYMBOL_TYPE { EMPTY, INFO, WRONG, GOAL };
-    private class SymbolMapping {
+    // Experimental trial configurations (dynamically loaded / selected)
+    public ArrayList<ExperimentDefinition> available_experiments = new ArrayList<>();
+    public ExperimentDefinition current_experiment = null;
+
+    // Data structures for representing an experiment
+    // TODO should probably be moved out into its own file...
+    enum SYMBOL_TYPE { EMPTY, LABEL, INFO }
+
+    private class ExperimentDefinition {
+       public final String name;
+
+       public ArrayList<MappingDefinition> mappings = new ArrayList<>();
+       public MappingDefinition last_mapping = null;
+
+       public ArrayList<String> labels = new ArrayList<>();
+       public String goal = null;
+
+       ExperimentDefinition(String name, ArrayList<MappingDefinition> mappings) {
+           this(name);
+           for (MappingDefinition m : mappings) {
+               addMapping(m);
+           }
+       }
+
+       ExperimentDefinition(String name) {
+            this.name = name;
+        }
+
+       public void addMapping(MappingDefinition m) {
+            // Add to the list of labels if it is a new label
+           if (m.type == SYMBOL_TYPE.LABEL && !labels.contains(m.text)) {
+                labels.add(m.text);
+           }
+
+           // Add it the list of mappings
+           mappings.add(m);
+       }
+
+       public boolean isAtGoal() {
+           return goal != null && last_mapping != null && last_mapping.type == SYMBOL_TYPE.LABEL &&
+                   last_mapping.text.equals(goal);
+       }
+    }
+
+    private class MappingDefinition {
         public int id;
         public SYMBOL_TYPE type;
         public String text;
 
-        SymbolMapping(int id, SYMBOL_TYPE type, String text) {
+        MappingDefinition(int id, SYMBOL_TYPE type, String text) {
             this.id = id;
             this.type = type;
             this.text = text;
         }
 
-        public int correspondingColour() {
-            int colourId = R.color.colorPrimary;
-            switch (currentMapping.type) {
+        public int correspondingColour(String goal) {
+            switch (type) {
                 case EMPTY:
                     return R.color.feedbackNone;
+                case LABEL:
+                    return text.equals(goal) ? R.color.feedbackGreen : R.color.feedbackRed;
                 case INFO:
                     return R.color.feedbackOrange;
-                case WRONG:
-                    return R.color.feedbackRed;
-                case GOAL:
-                    return R.color.feedbackGreen;
                 default:
                     return R.color.colorPrimary;
             }
         }
     }
-    private final SymbolMapping[] MAPPINGS = {
-            new SymbolMapping(0, SYMBOL_TYPE.WRONG, "Bob's office"),
-            new SymbolMapping(1, SYMBOL_TYPE.INFO, "Alice's office is down " +
-                    "the corridor, past Bob's office"),
-            new SymbolMapping(2, SYMBOL_TYPE.EMPTY, null),
-            new SymbolMapping(3, SYMBOL_TYPE.GOAL, "Alice's office"),
-    };
-    private SymbolMapping currentMapping = null;
 
     // Drawing variables
-    private Paint highlightPaint = null;
+    private Paint highlight_paint = null;
 
     static {
         System.loadLibrary("native-lib");
@@ -132,8 +168,8 @@ public class GameActivity extends AppCompatActivity {
 
         // Configure the interface (interactivity and content)
         initialiseDrawing();
-        refreshExperimentSpinner();
         configureInteractivity();
+        loadExperiments();
 
         // Start everything to help with image acquisition and processing
         startCameraThread();
@@ -180,9 +216,22 @@ public class GameActivity extends AppCompatActivity {
                 ViewSwitcher vs = findViewById(R.id.switcher);
                 vs.showNext();
 
-                ((TextView) findViewById(R.id.task_info)).setText("find " + currentGoal);
+                ((TextView) findViewById(R.id.task_info)).setText("find " + current_experiment.goal);
                 findViewById(R.id.background_mask).setVisibility(View.GONE);
                 updateTagDisplay();
+            }
+        });
+
+        Spinner s_exp = findViewById(R.id.experiment_spinner);
+        s_exp.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> adapterView, View view, int i, long l) {
+                selectExperiment(i);
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> adapterView) {
+
             }
         });
 
@@ -190,10 +239,8 @@ public class GameActivity extends AppCompatActivity {
         ib.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                boolean done = currentMapping != null &&
-                        currentMapping.type == SYMBOL_TYPE.GOAL;
-                currentDetection = null;
-                currentMapping = null;
+                boolean done = current_experiment.isAtGoal();
+                current_experiment.last_mapping = null;
 
                 if (done) {
                     findViewById(R.id.detection_view).setVisibility(View.GONE);
@@ -212,7 +259,7 @@ public class GameActivity extends AppCompatActivity {
      */
     private void updateTagDisplay() {
         // Hide and exit if there is no current detection
-        if (currentDetection == null) {
+        if (current_experiment.last_mapping == null) {
             findViewById(R.id.task_panel).setBackgroundResource(R.color.colorPrimary);
             findViewById(R.id.tag_panel).setVisibility(View.GONE);
             findViewById(R.id.detection_view).setVisibility(View.GONE);
@@ -221,18 +268,18 @@ public class GameActivity extends AppCompatActivity {
         }
 
         // Apply correct colours
-        final int colourId = currentMapping.correspondingColour();
-        findViewById(R.id.task_panel).setBackgroundResource(colourId);
-        findViewById(R.id.tag_panel).setBackgroundResource(colourId);
+        final int colour_id = current_experiment.last_mapping.correspondingColour(current_experiment.goal);
+        findViewById(R.id.task_panel).setBackgroundResource(colour_id);
+        findViewById(R.id.tag_panel).setBackgroundResource(colour_id);
 
         // Update the icon and text for the tag info
         findViewById(R.id.tag_panel).setVisibility(View.VISIBLE);
         ((ImageView) findViewById(R.id.tag_dismiss)).setImageResource(
-                (currentMapping.type == SYMBOL_TYPE.GOAL) ?
+                (current_experiment.isAtGoal()) ?
                         R.drawable.done_24dp : R.drawable.close_24dp);
         ((Button) findViewById(R.id.tag_info_button)).setText(
-                (currentMapping.type == SYMBOL_TYPE.EMPTY) ?
-                        "<empty tag>" : currentMapping.text);
+                (current_experiment.last_mapping.type == SYMBOL_TYPE.EMPTY) ?
+                        "<empty tag>" : current_experiment.last_mapping.text);
 
         // Show the detection view
         findViewById(R.id.detection_view).setVisibility(View.VISIBLE);
@@ -245,9 +292,9 @@ public class GameActivity extends AppCompatActivity {
      * Camera view and processing control
      */
     private void startCameraThread() {
-        cameraThread = new HandlerThread("CameraBackground");
-        cameraThread.start();
-        cameraHandler = new Handler(cameraThread.getLooper());
+        camera_thread = new HandlerThread("CameraBackground");
+        camera_thread.start();
+        camera_handler = new Handler(camera_thread.getLooper());
     }
 
     private void configureCameraView() {
@@ -257,14 +304,14 @@ public class GameActivity extends AppCompatActivity {
             public void surfaceCreated(SurfaceHolder surfaceHolder) {
                 // Set size and format to match what we will be getting out
                 // of the camera
-                surfaceHolder.setFixedSize(cameraSize.getWidth(), cameraSize
+                surfaceHolder.setFixedSize(camera_size.getWidth(), camera_size
                         .getHeight());
 
                 // Create the image reader
-                imageReader = ImageReader.newInstance(cameraSize.getWidth(),
-                        cameraSize.getHeight(), imageFormat, 2);
-                imageReader.setOnImageAvailableListener(new
-                        ImageReaderCallback(), cameraHandler);
+                image_reader = ImageReader.newInstance(camera_size.getWidth(),
+                        camera_size.getHeight(), IMAGE_FORMAT, 2);
+                image_reader.setOnImageAvailableListener(new
+                        ImageReaderCallback(), camera_handler);
 
                 // This is run every time the app is resumed, so attach to
                 // the camera here
@@ -299,18 +346,18 @@ public class GameActivity extends AppCompatActivity {
 
         // Attempt to get the ID of the back facing camera
         try {
-            cameraManager = (CameraManager) this.getSystemService(Context
+            camera_manager = (CameraManager) this.getSystemService(Context
                     .CAMERA_SERVICE);
-            String[] cameras = cameraManager.getCameraIdList();
+            String[] cameras = camera_manager.getCameraIdList();
             for (final String s : cameras) {
-                CameraCharacteristics cc = cameraManager.getCameraCharacteristics(s);
+                CameraCharacteristics cc = camera_manager.getCameraCharacteristics(s);
                 if (cc.get(CameraCharacteristics.LENS_FACING) ==
                         CameraMetadata.LENS_FACING_BACK) {
-                    cameraID = s;
-                    cameraCharacteristics = cc;
+                    camera_id = s;
+                    camera_characteristics = cc;
                 }
             }
-            if (cameraID == null) throw new Exception();
+            if (camera_id == null) throw new Exception();
         } catch (Exception e) {
             Toast.makeText(this, "Back facing camera access failed!", Toast
                     .LENGTH_LONG).show();
@@ -321,13 +368,13 @@ public class GameActivity extends AppCompatActivity {
         try {
             // Bail if we don't have the valid info (i.e. initialise camera info
             // has not been called), or permissions fail
-            if (cameraManager == null || cameraID == null || cameraCharacteristics
+            if (camera_manager == null || camera_id == null || camera_characteristics
                     == null || ContextCompat.checkSelfPermission(this, Manifest
                     .permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
                 throw new CameraAccessException(CameraAccessException.CAMERA_ERROR);
             }
-            cameraManager.openCamera(cameraID, new CameraDeviceCallback(),
-                    cameraHandler);
+            camera_manager.openCamera(camera_id, new CameraDeviceCallback(),
+                    camera_handler);
         } catch (CameraAccessException e) {
             Toast.makeText(this, "The app failed to access the camera",
                     Toast.LENGTH_LONG).show();
@@ -335,38 +382,38 @@ public class GameActivity extends AppCompatActivity {
     }
 
     private void detachFromCamera() {
-        if (cameraCaptureSession != null) {
+        if (camera_capture_session != null) {
             try {
-                cameraCaptureSession.stopRepeating();
-                cameraCaptureSession.abortCaptures();
+                camera_capture_session.stopRepeating();
+                camera_capture_session.abortCaptures();
             } catch (Exception e) {}
-            cameraCaptureSession.close();
+            camera_capture_session.close();
         }
-        if (cameraDevice != null) cameraDevice.close();
-        cameraCaptureSession = null;
-        cameraDevice = null;
+        if (camera_device != null) camera_device.close();
+        camera_capture_session = null;
+        camera_device = null;
     }
 
     class CameraDeviceCallback extends CameraDevice.StateCallback {
         @Override
         public void onOpened(@NonNull CameraDevice cameraDevice) {
             try {
-                GameActivity.this.cameraDevice = cameraDevice;
+                GameActivity.this.camera_device = cameraDevice;
 
                 // Get a list of the Surfaces we want to push the camera data to
                 List<Surface> ls = Arrays.asList(((SurfaceView) findViewById
                         (R.id.camera_view)).getHolder().getSurface(),
-                        imageReader.getSurface());
+                        image_reader.getSurface());
 
                 // Build a capture request, with the target surfaces included
                 CaptureRequest.Builder b = cameraDevice.createCaptureRequest
                         (CameraDevice.TEMPLATE_PREVIEW);
                 for (final Surface s : ls) b.addTarget(s);
-                cameraCaptureRequest = b.build();
+                camera_capture_request = b.build();
 
                 // Generate the capture session
                 cameraDevice.createCaptureSession(ls, new
-                        CameraSessionCallback(), cameraHandler);
+                        CameraSessionCallback(), camera_handler);
             } catch (CameraAccessException e) {
                 Log.e("HuC", "Device failed to access camera...");
             }
@@ -387,11 +434,11 @@ public class GameActivity extends AppCompatActivity {
         @Override
         public void onConfigured(@NonNull CameraCaptureSession cameraCaptureSession) {
             try {
-                GameActivity.this.cameraCaptureSession = cameraCaptureSession;
+                GameActivity.this.camera_capture_session = cameraCaptureSession;
 
                 // Start capturing
-                cameraCaptureSession.setRepeatingRequest(cameraCaptureRequest,
-                        null, cameraHandler);
+                cameraCaptureSession.setRepeatingRequest(camera_capture_request,
+                        null, camera_handler);
             } catch (CameraAccessException e) {
                 Log.e("HuC", "Session failed to access camera...");
             }
@@ -420,28 +467,29 @@ public class GameActivity extends AppCompatActivity {
             Image.Plane p = i.getPlanes()[0];
             byte[] bytes = new byte[p.getBuffer().remaining()];
             p.getBuffer().get(bytes);
-            currentDetection = searchForAprilTags(bytes, bytes.length);
-            if (currentDetection != null) {
-                // Extract symbols from the conversion database
-                for (final SymbolMapping s : MAPPINGS)
-                    if(currentDetection.id == s.id) currentMapping = s;
+            current_detection = searchForAprilTags(bytes, bytes.length);
+            if (current_detection != null) {
+                // Extract symbols from the mapping database in the experiment definition
+                for (final MappingDefinition d : current_experiment.mappings)
+                    if (current_detection.id == d.id) current_experiment.last_mapping = d;
 
                 // Get a mutable copy of the bitmap
                 Bitmap bm = BitmapFactory.decodeByteArray(bytes, 0,
                         bytes.length).copy(Bitmap.Config.ARGB_8888, true);
 
                 // Configure the highlight paint to the type of detection
-                highlightPaint.setColor(GameActivity.this.getResources()
-                        .getColor(currentMapping.correspondingColour()));
+                highlight_paint.setColor(GameActivity.this.getResources()
+                        .getColor(current_experiment.last_mapping.correspondingColour
+                                (current_experiment.goal)));
 
                 // Draw to the canvas
-                final Path box = currentDetection.path();
+                final Path box = current_detection.path();
                 final Canvas c = new Canvas(bm);
-                highlightPaint.setStyle(Paint.Style.STROKE);
-                c.drawPath(box, highlightPaint);
-                highlightPaint.setStyle(Paint.Style.FILL);
-                highlightPaint.setAlpha(128);
-                c.drawPath(box, highlightPaint);
+                highlight_paint.setStyle(Paint.Style.STROKE);
+                c.drawPath(box, highlight_paint);
+                highlight_paint.setStyle(Paint.Style.FILL);
+                highlight_paint.setAlpha(128);
+                c.drawPath(box, highlight_paint);
 
                 // Finish by rotating the bitmap 90 degress
                 Matrix m = new Matrix();
@@ -467,31 +515,117 @@ public class GameActivity extends AppCompatActivity {
      * Drawing helpers
      */
     private void initialiseDrawing() {
-        highlightPaint = new Paint();
-        highlightPaint.setAntiAlias(true);
-        highlightPaint.setStrokeWidth(5);
+        highlight_paint = new Paint();
+        highlight_paint.setAntiAlias(true);
+        highlight_paint.setStrokeWidth(5);
     }
 
     /**
-     * Control the spinner content
+     * Use the experiments lists to populate the spinners
      */
+    private void loadExperiments() {
+        // Get the list of experiment definition files
+        final AssetManager am = getAssets();
+        String[] assets = {};
+        try {
+            assets = am.list(EXPERIMENTS_FOLDER);
+            if (assets == null) {
+               assets = new String[]{};
+            }
+
+            // Load the data from each of the found experiments
+            for (String asset_filename : assets) {
+                if (asset_filename.endsWith(".xml")) {
+                    DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+                    loadExperiment(asset_filename, am.open(new File(EXPERIMENTS_FOLDER,
+                            asset_filename).getPath(), AssetManager.ACCESS_BUFFER), dbf);
+                } else {
+                    Log.w("HuC", "Skipped: " + asset_filename);
+                }
+                Log.w("HuC", "Loaded: " + asset_filename);
+            }
+        } catch (Exception e) {
+            Log.e("HuC", "Failed: " + e);
+        }
+
+
+        // When we are done loading the experiments, refresh the experiments spinner
+        refreshExperimentSpinner();
+    }
+
+    private void loadExperiment(String asset_name, InputStream asset_stream, DocumentBuilderFactory
+            dbf) {
+        // Load the XML data from the file
+        String name = null;
+        ArrayList<MappingDefinition> defs = new ArrayList<>();
+        try {
+            // Load the document
+            DocumentBuilder db = dbf.newDocumentBuilder();
+            Document d = db.parse(asset_stream);
+
+            // Get the node containing the experiment's mappings
+            NodeList ns = d.getElementsByTagName("mappings");
+            if (ns.getLength() == 0) {
+                return; // We found no experiment in the xml file, there is nothing more to do here
+            }
+            Node node_experiment = ns.item(0);  // Only use the first experiment per file
+
+            // Pull out the experiment name if possible
+            Node node_name = node_experiment.getAttributes().getNamedItem("name");
+            name = node_name == null ? asset_name : node_name.getNodeValue();
+
+            // Create mapping definitions from each found mapping & add it to the list
+            ns = node_experiment.getChildNodes();
+            for (int i = 0; i< ns.getLength(); i++) {
+                // Don't process unless it is a mapping
+                Node n = ns.item(i);
+                if (!n.getNodeName().equals("mapping")) {
+                    continue;
+                }
+
+                // Use the attributes to construct a mapping definition object
+                NamedNodeMap attrs = n.getAttributes();
+                defs.add(new MappingDefinition(
+                        Integer.parseInt(attrs.getNamedItem("tag_id").getNodeValue()),
+                        SYMBOL_TYPE.valueOf(attrs.getNamedItem("type").getNodeValue().toUpperCase()),
+                        attrs.getNamedItem("text").getNodeValue()
+                ));
+            }
+        } catch (Exception e) {
+            Log.e("HuC", "Experiment @ '" + asset_name + "' failed to load with: " + e.getMessage());
+            return;
+        }
+
+        // Create an experiment definition object & add it to the list of loaded experiments
+        available_experiments.add(new ExperimentDefinition(name, defs));
+    }
+
+    private void selectExperiment(int number) {
+        current_experiment = available_experiments.get(number);
+        refreshGoalSpinner();
+    }
+
     private void refreshExperimentSpinner() {
         // Configure the spinner
         Spinner s = findViewById(R.id.experiment_spinner);
+        ArrayList<String> experiment_names = new ArrayList<>();
+        for (ExperimentDefinition e : available_experiments) {
+            experiment_names.add(e.name);
+        }
         ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_item, listExperiments);
+                android.R.layout.simple_spinner_item, experiment_names);
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         s.setAdapter(adapter);
 
-        // Always update the goal spinner
-        refreshGoalSpinner();
+        // Always reselect the first experiment (which will in turn update the list of goals)
+        selectExperiment(0);
     }
 
     private void refreshGoalSpinner() {
         // Configure the spinner
         Spinner s = findViewById(R.id.goal_spinner);
         ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_item, listGoals);
+                android.R.layout.simple_spinner_item, current_experiment.labels);
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         s.setAdapter(adapter);
     }
