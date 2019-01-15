@@ -55,6 +55,8 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
@@ -80,6 +82,7 @@ public class GameActivity extends AppCompatActivity {
     // Tag detection information for the app
     private boolean detecting = false;
     private Detection current_detection = null;
+    private Pattern arrow_regex = Pattern.compile("^\\$(.*)\\$\\s*(.*)");
 
     // Experimental trial configurations (static)
     public final String EXPERIMENTS_FOLDER = "human_cues_tag_experiments";
@@ -300,9 +303,6 @@ public class GameActivity extends AppCompatActivity {
         ((ImageView) findViewById(R.id.tag_dismiss)).setImageResource(
                 (current_experiment.isAtGoal()) ?
                         R.drawable.done_24dp : R.drawable.close_24dp);
-        ((Button) findViewById(R.id.tag_info_button)).setText(
-                (current_experiment.last_mapping.type == SYMBOL_TYPE.EMPTY) ?
-                        "<empty tag>" : current_experiment.last_mapping.text);
 
         // Update the text (split the string, add elements to linear layout, & populate)
         String[] ss = ((current_experiment.last_mapping.type == SYMBOL_TYPE.EMPTY) ?
@@ -310,9 +310,41 @@ public class GameActivity extends AppCompatActivity {
         LinearLayout ll = findViewById(R.id.tag_info_layout);
         ll.removeAllViews();
         for (String s : ss) {
+            // Pull out arrow from the text (only expect one maximum)
+            Matcher m = arrow_regex.matcher(s);
+            String text;
+            int image_id = 0;
+            if (m.find()) {
+                switch (m.group(1).toUpperCase()) {
+                    case "UP":
+                        image_id = R.drawable.up_24dp;
+                        break;
+                    case "DOWN":
+                        image_id = R.drawable.down_24dp;
+                        break;
+                    case "LEFT":
+                        image_id = R.drawable.left_24dp;
+                        break;
+                    case "RIGHT":
+                        image_id = R.drawable.right_24dp;
+                        break;
+                }
+                text = m.group(2);
+            } else {
+                text = s;
+            }
+
+            // Inflate the layout; filling it with the correct content
             ConstraintLayout cl = (ConstraintLayout) GameActivity.this.getLayoutInflater().inflate(
                     R.layout.tag_info_item, null);
-            ((TextView) cl.findViewById(R.id.tag_item_text)).setText(s);
+            ((TextView) cl.findViewById(R.id.tag_item_text)).setText(text);
+            ImageView iv = cl.findViewById(R.id.tag_item_arrow);
+            if (image_id == 0) {
+                iv.setVisibility(View.INVISIBLE);
+            } else {
+                iv.setVisibility(View.VISIBLE);
+                iv.setImageResource(image_id);
+            }
             ll.addView(cl);
         }
 
