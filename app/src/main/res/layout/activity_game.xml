@@ -154,6 +154,16 @@
                 app:layout_constraintLeft_toLeftOf="parent"
                 app:layout_constraintRight_toRightOf="parent">
 
+                <LinearLayout
+                    android:id="@+id/tag_info_layout"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingRight="48dp"
+                    app:layout_constraintBottom_toBottomOf="parent"
+                    app:layout_constraintLeft_toLeftOf="parent"
+                    app:layout_constraintRight_toRightOf="parent"></LinearLayout>
+
                 <ImageButton
                     android:id="@+id/tag_dismiss"
                     style="?attr/borderlessButtonStyle"

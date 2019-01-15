@@ -23,6 +23,7 @@ import android.media.ImageReader;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.support.annotation.NonNull;
+import android.support.constraint.ConstraintLayout;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AppCompatActivity;
@@ -38,6 +39,7 @@ import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.ImageButton;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -293,7 +295,7 @@ public class GameActivity extends AppCompatActivity {
         findViewById(R.id.task_panel).setBackgroundResource(colour_id);
         findViewById(R.id.tag_panel).setBackgroundResource(colour_id);
 
-        // Update the icon and text for the tag info
+        // Update the icon
         findViewById(R.id.tag_panel).setVisibility(View.VISIBLE);
         ((ImageView) findViewById(R.id.tag_dismiss)).setImageResource(
                 (current_experiment.isAtGoal()) ?
@@ -301,6 +303,18 @@ public class GameActivity extends AppCompatActivity {
         ((Button) findViewById(R.id.tag_info_button)).setText(
                 (current_experiment.last_mapping.type == SYMBOL_TYPE.EMPTY) ?
                         "<empty tag>" : current_experiment.last_mapping.text);
+
+        // Update the text (split the string, add elements to linear layout, & populate)
+        String[] ss = ((current_experiment.last_mapping.type == SYMBOL_TYPE.EMPTY) ?
+                "<empty tag>" : current_experiment.last_mapping.text).split("\\\\n");
+        LinearLayout ll = findViewById(R.id.tag_info_layout);
+        ll.removeAllViews();
+        for (String s : ss) {
+            ConstraintLayout cl = (ConstraintLayout) GameActivity.this.getLayoutInflater().inflate(
+                    R.layout.tag_info_item, null);
+            ((TextView) cl.findViewById(R.id.tag_item_text)).setText(s);
+            ll.addView(cl);
+        }
 
         // Show the detection view
         findViewById(R.id.detection_view).setVisibility(View.VISIBLE);
