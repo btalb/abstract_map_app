@@ -20,6 +20,7 @@ import android.hardware.camera2.CameraMetadata;
 import android.hardware.camera2.CaptureRequest;
 import android.media.Image;
 import android.media.ImageReader;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.support.annotation.NonNull;
@@ -161,6 +162,8 @@ public class GameActivity extends AppCompatActivity {
     }
 
     // Logging variables
+    private static final int WRITE_EXTERNAL_STORAGE_PERMISSIONS = 1;
+    private final String LOG_DIRECTORY = "human_cues_experiment_logs";
     private final SimpleDateFormat LOG_TS_FORMAT = new SimpleDateFormat("yyMMdd_HHmmss");
     private final SimpleDateFormat LOG_TS_FORMAT_MS = new SimpleDateFormat("yyMMdd_HHmmss.SSS");
     private FileWriter current_log = null;
@@ -431,7 +434,6 @@ public class GameActivity extends AppCompatActivity {
         if (permission != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, new String[]{Manifest
                     .permission.CAMERA}, CAMERA_PERMISSIONS);
-            return;
         }
 
         // Attempt to get the ID of the back facing camera
@@ -742,7 +744,9 @@ public class GameActivity extends AppCompatActivity {
 
     public void finishLog() {
         try {
-            current_log.close();
+            if (current_log != null) {
+                current_log.close();
+            }
         } catch (Exception e) {
             Log.e("HuC", "Failed to close the log");
         } finally {
@@ -751,14 +755,33 @@ public class GameActivity extends AppCompatActivity {
     }
 
     public void startLog() {
+        // Do all the Android dribble to ensure I can actually write
+        int permission = ContextCompat.checkSelfPermission(this, Manifest
+                .permission.WRITE_EXTERNAL_STORAGE);
+        if (permission != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, new String[]{Manifest
+                    .permission.WRITE_EXTERNAL_STORAGE}, WRITE_EXTERNAL_STORAGE_PERMISSIONS);
+        }
+
+        // Really check that we can get on external storage...
+        if (!Environment.MEDIA_MOUNTED.equals(Environment.getExternalStorageState())) {
+            Log.e("HuC", "Failed to start the log (could not access mounted media");
+            current_log = null;
+            return;
+        }
+
+        // Now try and start the writer successfully
         try {
-            current_log = new FileWriter(new File(
-                    GameActivity.this.getFilesDir(),
-                    LOG_TS_FORMAT.format(new Date()) + "__" +
-                            current_experiment.name.replaceAll(" ", "_") +
-                            "__" + current_experiment.goal + ".log"));
+            File log_file = new File(Environment.getExternalStoragePublicDirectory(LOG_DIRECTORY),
+            LOG_TS_FORMAT.format(new Date()) + "__" +
+                    current_experiment.name.replaceAll(" ", "_") +
+                    "__" + current_experiment.goal + ".log");
+            if (!log_file.getParentFile().mkdirs()) {
+                Log.e("HuC", "DIRECTORY NOT CREATED???");
+            }
+            current_log = new FileWriter(log_file, false);
         } catch (Exception e) {
-            Log.e("HuC", "Failed to start the log");
+            Log.e("HuC", "Failed to start the log (opening a FileWriter failed): " + e);
             current_log = null;
         }
     }
