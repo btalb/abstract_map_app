@@ -51,9 +51,13 @@ import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
 import java.io.File;
+import java.io.FileWriter;
 import java.io.InputStream;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -156,6 +160,11 @@ public class GameActivity extends AppCompatActivity {
         }
     }
 
+    // Logging variables
+    private final SimpleDateFormat LOG_TS_FORMAT = new SimpleDateFormat("yyMMdd_HHmmss");
+    private final SimpleDateFormat LOG_TS_FORMAT_MS = new SimpleDateFormat("yyMMdd_HHmmss.SSS");
+    private FileWriter current_log = null;
+
     // Drawing variables
     private Paint highlight_paint = null;
 
@@ -222,8 +231,13 @@ public class GameActivity extends AppCompatActivity {
                 current_experiment.goal = current_experiment.labels.get(((Spinner) findViewById(R.id
                         .goal_spinner)).getSelectedItemPosition());
 
-                Toast.makeText(GameActivity.this, "Starting experiment '" + current_experiment
-                        .name + "', with goal: " + current_experiment.goal, Toast.LENGTH_LONG).show();
+//                Toast.makeText(GameActivity.this, "Starting experiment '" + current_experiment
+//                        .name + "', with goal: " + current_experiment.goal, Toast.LENGTH_LONG).show();
+
+                // Start a new log before entering the next experiment
+                startLog();
+                appendLog("Started the experiment \"" + current_experiment.name +"\", with the " +
+                                "goal of finding \"" + current_experiment.goal + "\"");
 
                 // Update the UI
                 ViewSwitcher vs = findViewById(R.id.switcher);
@@ -272,6 +286,11 @@ public class GameActivity extends AppCompatActivity {
                     findViewById(R.id.detection_view).setVisibility(View.GONE);
                     findViewById(R.id.background_mask).setVisibility(View.VISIBLE);
                     ((ViewSwitcher) findViewById(R.id.switcher)).showPrevious();
+
+                    // Log that the experiment was successfully completed!
+                    appendLog("Successfully found \"" + current_experiment.goal + "\". Experiment" +
+                            " over!");
+                    finishLog();
                 } else {
                     updateTagDisplay();
                 }
@@ -346,6 +365,10 @@ public class GameActivity extends AppCompatActivity {
                 iv.setImageResource(image_id);
             }
             ll.addView(cl);
+
+            // Log the current tag detection to the log
+            appendLog("Observed tag " + Integer.toString(current_experiment.last_mapping.id) +
+                    "(" + current_experiment.last_mapping.text + ")");
         }
 
         // Show the detection view
@@ -607,9 +630,8 @@ public class GameActivity extends AppCompatActivity {
                     loadExperiment(asset_filename, am.open(new File(EXPERIMENTS_FOLDER,
                             asset_filename).getPath(), AssetManager.ACCESS_BUFFER), dbf);
                 } else {
-                    Log.w("HuC", "Skipped: " + asset_filename);
+                    Log.i("HuC", "Skipped: " + asset_filename);
                 }
-                Log.w("HuC", "Loaded: " + asset_filename);
             }
         } catch (Exception e) {
             Log.e("HuC", "Failed: " + e);
@@ -704,6 +726,42 @@ public class GameActivity extends AppCompatActivity {
         selectGoal(0);
     }
 
+    /**
+     * Logging
+     */
+    public void appendLog(String log_string) {
+        if (current_log != null) {
+            try {
+                current_log.append("[").append(LOG_TS_FORMAT_MS.format(new Date())).append("] ").append(log_string).append("\n");
+                current_log.flush();
+            } catch (Exception e) {
+                Log.e("HuC", "Failed to write the following to log: " + log_string);
+            }
+        }
+    }
+
+    public void finishLog() {
+        try {
+            current_log.close();
+        } catch (Exception e) {
+            Log.e("HuC", "Failed to close the log");
+        } finally {
+            current_log = null;
+        }
+    }
+
+    public void startLog() {
+        try {
+            current_log = new FileWriter(new File(
+                    GameActivity.this.getFilesDir(),
+                    LOG_TS_FORMAT.format(new Date()) + "__" +
+                            current_experiment.name.replaceAll(" ", "_") +
+                            "__" + current_experiment.goal + ".log"));
+        } catch (Exception e) {
+            Log.e("HuC", "Failed to start the log");
+            current_log = null;
+        }
+    }
     /**
      * Detection representation
      */
