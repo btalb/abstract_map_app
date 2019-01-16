@@ -115,6 +115,10 @@ Java_com_humancues_humancuestaggame_GameActivity_searchForAprilTags(
                                 ms(&rA), ms(&rB), ms(&rC), ms(&rD)
             );
         }
+        // Clean up and return
+        pjpeg_destroy(jpg);
+        image_u8_destroy(img);
+        apriltag_detections_destroy(detections);
         return NULL;
     }
 

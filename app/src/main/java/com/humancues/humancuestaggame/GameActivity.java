@@ -552,7 +552,7 @@ public class GameActivity extends AppCompatActivity {
     }
 
     class ImageReaderCallback implements ImageReader.OnImageAvailableListener {
-        private final int SLOW_DOWN_FACTOR = 5;
+        private final int SLOW_DOWN_FACTOR = 10;
         private long count = 0;
 
         @Override
