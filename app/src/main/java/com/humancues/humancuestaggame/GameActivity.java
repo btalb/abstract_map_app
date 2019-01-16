@@ -373,14 +373,9 @@ public class GameActivity extends AppCompatActivity {
             // Inflate the layout; filling it with the correct content
             ConstraintLayout cl = (ConstraintLayout) GameActivity.this.getLayoutInflater().inflate(
                     R.layout.tag_info_item, null);
-            ((TextView) cl.findViewById(R.id.tag_item_text)).setText(text);
-            ImageView iv = cl.findViewById(R.id.tag_item_arrow);
-            if (image_id == 0) {
-                iv.setVisibility(View.INVISIBLE);
-            } else {
-                iv.setVisibility(View.VISIBLE);
-                iv.setImageResource(image_id);
-            }
+            TextView tv = cl.findViewById(R.id.tag_item_text);
+            tv.setText(text);
+            tv.setCompoundDrawablesWithIntrinsicBounds(image_id, 0, 0, 0);
             ll.addView(cl);
 
             // Log the current tag detection to the log
@@ -557,13 +552,17 @@ public class GameActivity extends AppCompatActivity {
     }
 
     class ImageReaderCallback implements ImageReader.OnImageAvailableListener {
+        private final int SLOW_DOWN_FACTOR = 5;
+        private long count = 0;
+
         @Override
         public void onImageAvailable(ImageReader imageReader) {
             // Always get an image, ensuring it is closed even if we
             // terminate early
+            count++;
             Image i = imageReader.acquireLatestImage();
             if (i == null) return;
-            if (!detecting) {
+            if (!detecting || (count % SLOW_DOWN_FACTOR) != 0) {
                 i.close();
                 return;
             }
