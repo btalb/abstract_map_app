@@ -2,6 +2,7 @@ package com.humancues.humancuestaggame;
 
 import android.Manifest;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.pm.PackageManager;
 import android.content.res.AssetManager;
 import android.graphics.Bitmap;
@@ -27,6 +28,7 @@ import android.support.annotation.NonNull;
 import android.support.constraint.ConstraintLayout;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
+import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.util.Log;
@@ -179,6 +181,25 @@ public class GameActivity extends AppCompatActivity {
      * Lifecycle implementations
      */
     @Override
+    public void onBackPressed() {
+        if (current_experiment != null) {
+            new AlertDialog.Builder(GameActivity.this)
+                    .setTitle("Are you sure you want to quit the experiment?")
+                    .setMessage("Back will exit the experiment permanently. Are you sure you want to " +
+                            "finish the experiment?")
+                    .setNegativeButton(android.R.string.no, null)
+                    .setPositiveButton(android.R.string.yes, new DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(DialogInterface dialogInterface, int i) {
+                            finishExperiment(false);
+                        }
+                    }).create().show();
+        } else {
+            GameActivity.super.onBackPressed();
+        }
+    }
+
+    @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_game);
@@ -286,14 +307,7 @@ public class GameActivity extends AppCompatActivity {
                 current_experiment.last_mapping = null;
 
                 if (done) {
-                    findViewById(R.id.detection_view).setVisibility(View.GONE);
-                    findViewById(R.id.background_mask).setVisibility(View.VISIBLE);
-                    ((ViewSwitcher) findViewById(R.id.switcher)).showPrevious();
-
-                    // Log that the experiment was successfully completed!
-                    appendLog("Successfully found \"" + current_experiment.goal + "\". Experiment" +
-                            " over!");
-                    finishLog();
+                    finishExperiment(true);
                 } else {
                     updateTagDisplay();
                 }
@@ -615,6 +629,20 @@ public class GameActivity extends AppCompatActivity {
     /**
      * Use the experiments lists to populate the spinners
      */
+    private void finishExperiment(boolean successful) {
+        findViewById(R.id.detection_view).setVisibility(View.GONE);
+        findViewById(R.id.background_mask).setVisibility(View.VISIBLE);
+        ((ViewSwitcher) findViewById(R.id.switcher)).showPrevious();
+
+        // Log what the final result of the experiment was
+        appendLog((successful) ? "Successfully found \"" + current_experiment.goal + "\". " +
+                "Experiment over!" : "Experiment was quit early. Goal NOT found!");
+        finishLog();
+
+        // Clean up current experiment variables
+        current_experiment = null;
+    }
+
     private void loadExperiments() {
         // Get the list of experiment definition files
         final AssetManager am = getAssets();
@@ -776,9 +804,7 @@ public class GameActivity extends AppCompatActivity {
             LOG_TS_FORMAT.format(new Date()) + "__" +
                     current_experiment.name.replaceAll(" ", "_") +
                     "__" + current_experiment.goal + ".log");
-            if (!log_file.getParentFile().mkdirs()) {
-                Log.e("HuC", "DIRECTORY NOT CREATED???");
-            }
+            log_file.getParentFile().mkdirs();
             current_log = new FileWriter(log_file, false);
         } catch (Exception e) {
             Log.e("HuC", "Failed to start the log (opening a FileWriter failed): " + e);
