@@ -95,6 +95,7 @@ public class GameActivity extends AppCompatActivity {
     public final String EXPERIMENTS_FOLDER = "human_cues_tag_experiments";
 
     // Experimental trial configurations (dynamically loaded / selected)
+    public boolean in_experiment = false;
     public ArrayList<ExperimentDefinition> available_experiments = new ArrayList<>();
     public ExperimentDefinition current_experiment = null;
 
@@ -182,7 +183,7 @@ public class GameActivity extends AppCompatActivity {
      */
     @Override
     public void onBackPressed() {
-        if (current_experiment != null) {
+        if (in_experiment) {
             new AlertDialog.Builder(GameActivity.this)
                     .setTitle("Are you sure you want to quit the experiment?")
                     .setMessage("Back will exit the experiment permanently. Are you sure you want to " +
@@ -254,6 +255,7 @@ public class GameActivity extends AppCompatActivity {
                         .getSelectedItemPosition());
                 current_experiment.goal = current_experiment.labels.get(((Spinner) findViewById(R.id
                         .goal_spinner)).getSelectedItemPosition());
+                in_experiment = true;
 
 //                Toast.makeText(GameActivity.this, "Starting experiment '" + current_experiment
 //                        .name + "', with goal: " + current_experiment.goal, Toast.LENGTH_LONG).show();
@@ -639,6 +641,7 @@ public class GameActivity extends AppCompatActivity {
         finishLog();
 
         // Clean up current experiment variables
+        in_experiment = false;
         current_experiment = null;
     }
 
@@ -655,6 +658,7 @@ public class GameActivity extends AppCompatActivity {
             // Load the data from each of the found experiments
             for (String asset_filename : assets) {
                 if (asset_filename.endsWith(".xml")) {
+                    Log.i("HuC", "Loaded: " + asset_filename);
                     DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
                     loadExperiment(asset_filename, am.open(new File(EXPERIMENTS_FOLDER,
                             asset_filename).getPath(), AssetManager.ACCESS_BUFFER), dbf);
