@@ -154,6 +154,17 @@
                 app:layout_constraintLeft_toLeftOf="parent"
                 app:layout_constraintRight_toRightOf="parent">
 
+                <LinearLayout
+                    android:id="@+id/tag_info_layout"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingLeft="24dp"
+                    android:paddingRight="48dp"
+                    app:layout_constraintBottom_toBottomOf="parent"
+                    app:layout_constraintLeft_toLeftOf="parent"
+                    app:layout_constraintRight_toRightOf="parent"></LinearLayout>
+
                 <ImageButton
                     android:id="@+id/tag_dismiss"
                     style="?attr/borderlessButtonStyle"
@@ -165,18 +176,6 @@
                     app:layout_constraintTop_toTopOf="parent"
                     app:srcCompat="@drawable/close_24dp" />
 
-                <Button
-                    android:id="@+id/tag_info_button"
-                    style="?attr/borderlessButtonStyle"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:clickable="false"
-                    android:paddingRight="48dp"
-                    android:text="Button"
-                    android:textColor="?android:attr/textColorPrimaryInverse"
-                    app:layout_constraintBottom_toBottomOf="parent"
-                    app:layout_constraintLeft_toLeftOf="parent"
-                    app:layout_constraintRight_toRightOf="parent" />
             </android.support.constraint.ConstraintLayout>
 
         </android.support.constraint.ConstraintLayout>
