@@ -275,7 +275,7 @@ public class GameActivity extends AppCompatActivity {
             }
         });
 
-        Spinner s_exp = findViewById(R.id.experiment_spinner);
+        final Spinner s_exp = findViewById(R.id.experiment_spinner);
         s_exp.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> adapterView, View view, int i, long l) {
@@ -288,10 +288,11 @@ public class GameActivity extends AppCompatActivity {
             }
         });
 
-        Spinner s_goal = findViewById(R.id.goal_spinner);
+        final Spinner s_goal = findViewById(R.id.goal_spinner);
         s_goal.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> adapterView, View view, int i, long l) {
+                current_experiment = available_experiments.get(s_exp.getSelectedItemPosition());
                 selectGoal(i);
             }
 
@@ -728,6 +729,7 @@ public class GameActivity extends AppCompatActivity {
     }
 
     private void selectGoal(int number) {
+
         current_experiment.goal = current_experiment.labels.get(number);
     }
 
@@ -776,7 +778,9 @@ public class GameActivity extends AppCompatActivity {
     public void finishLog() {
         try {
             if (current_log != null) {
+                current_log.flush();
                 current_log.close();
+                Log.i("HuC", "Flushed and closed log");
             }
         } catch (Exception e) {
             Log.e("HuC", "Failed to close the log");
@@ -808,6 +812,7 @@ public class GameActivity extends AppCompatActivity {
                     current_experiment.name.replaceAll(" ", "_") +
                     "__" + current_experiment.goal + ".log");
             log_file.getParentFile().mkdirs();
+            Log.i("HuC", "Starting log at: " + log_file.getAbsolutePath());
             current_log = new FileWriter(log_file, false);
         } catch (Exception e) {
             Log.e("HuC", "Failed to start the log (opening a FileWriter failed): " + e);
